@@ -82,10 +82,9 @@ namespace Nop.Plugin.DiscountRules.CustomerRoles
         public string GetConfigurationUrl(int discountId, int? discountRequirementId)
         {
             var urlHelper = _urlHelperFactory.GetUrlHelper(_actionContextAccessor.ActionContext);
-            var url = new PathString(urlHelper.Action("Configure", "DiscountRulesCustomerRoles",
-                new { discountId = discountId, discountRequirementId = discountRequirementId }));            
-
-            return $"{_webHelper.GetStoreHost(_webHelper.IsCurrentConnectionSecured())}{url.Value.TrimStart('/')}";
+            
+            return urlHelper.Action("Configure", "DiscountRulesCustomerRoles", 
+                new { discountId = discountId, discountRequirementId = discountRequirementId }, _webHelper.CurrentRequestProtocol);
         }
 
         /// <summary>
