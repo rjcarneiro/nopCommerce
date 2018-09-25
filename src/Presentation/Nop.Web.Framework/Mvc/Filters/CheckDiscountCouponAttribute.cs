@@ -9,6 +9,8 @@ using Nop.Core.Data;
 using Nop.Core.Domain.Customers;
 using Nop.Services.Customers;
 using Nop.Services.Discounts;
+using Nop.Services.Localization;
+using Nop.Services.Messages;
 
 namespace Nop.Web.Framework.Mvc.Filters
 {
@@ -39,6 +41,8 @@ namespace Nop.Web.Framework.Mvc.Filters
 
             private readonly ICustomerService _customerService;
             private readonly IDiscountService _discountService;
+            private readonly ILocalizationService _localizationService;
+            private readonly INotificationService _notificationService;
             private readonly IWorkContext _workContext;
 
             #endregion
@@ -47,10 +51,14 @@ namespace Nop.Web.Framework.Mvc.Filters
 
             public CheckDiscountCouponFilter(ICustomerService customerService,
                 IDiscountService discountService,
+                ILocalizationService localizationService,
+                INotificationService notificationService,
                 IWorkContext workContext)
             {
                 this._customerService = customerService;
                 this._discountService = discountService;
+                this._localizationService = localizationService;
+                this._notificationService = notificationService;
                 this._workContext = workContext;
             }
 
@@ -95,7 +103,12 @@ namespace Nop.Web.Framework.Mvc.Filters
                     .ToList();
 
                 //apply discount coupon codes to customer
-                discounts.ForEach(discount => _customerService.ApplyDiscountCouponCode(_workContext.CurrentCustomer, discount.CouponCode));                
+                discounts.ForEach(discount => {
+                    _customerService.ApplyDiscountCouponCode(_workContext.CurrentCustomer, discount.CouponCode);
+                    //notificate customer about discount coupon applying
+                    _notificationService.SuccessNotification(
+                        string.Format(_localizationService.GetResource("ShoppingCart.DiscountCouponCode.Activated"), discount.CouponCode));
+                });                
             }
 
             /// <summary>

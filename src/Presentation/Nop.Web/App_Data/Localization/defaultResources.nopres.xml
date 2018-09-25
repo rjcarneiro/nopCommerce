@@ -17319,6 +17319,9 @@
   <LocaleResource Name="ShoppingCart.DiscountCouponCode">
     <Value>Discount Code</Value>
   </LocaleResource>
+  <LocaleResource Name="ShoppingCart.DiscountCouponCode.Activated">
+    <Value>Coupon code ({0}) is activated! The discount will be reflected in your order total.</Value>
+  </LocaleResource>
   <LocaleResource Name="ShoppingCart.DiscountCouponCode.Applied">
     <Value>The coupon code was applied</Value>
   </LocaleResource>
