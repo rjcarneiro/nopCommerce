@@ -4,7 +4,6 @@ using System.Net;
 using Microsoft.AspNetCore.Http;
 using Nop.Core.Domain.Localization;
 using Nop.Core.Infrastructure;
-using Nop.Services.Localization;
 
 namespace Nop.Services.Localization
 {
