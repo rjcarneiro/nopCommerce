@@ -10,17 +10,8 @@
             @T(Model.AlertMessage)
         </div>
         <div class="modal-footer">
-            <button type="submit" id="@(Model.WindowId)-submit-button" class="btn btn-primary pull-right">
-                @T("Admin.Common.Ok")
-            </button>
+            <span class="btn btn-primary pull-right" data-dismiss="modal">@T("Admin.Common.Ok")</span>
         </div>        
     </div>
 </div>
 <button type="submit" class="btn btn-default" id="@(Model.AlertId)" style="display:none" />
-<script>
-    $(document).ready(function () {
-        $("#@(Model.AlertId)-action-alert-submit-button").bind("click", function () {
-            $('#@(Model.AlertId)-action-alert').modal('toggle');
-        });
-    });
-</script>

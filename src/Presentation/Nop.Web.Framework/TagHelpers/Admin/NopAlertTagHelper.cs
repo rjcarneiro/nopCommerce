@@ -99,11 +99,8 @@ namespace Nop.Web.Framework.TagHelpers.Admin
             //modal script
             var script = new TagBuilder("script");
             script.InnerHtml.AppendHtml("$(document).ready(function () {" +
-                                        $"$('#{AlertId}').attr(\"data-toggle\", \"modal\").attr(\"data-target\", \"#{modalId}\");" +
-                                        $"$('#{modalId}-submit-button').attr(\"name\", $(\"#{AlertId}\").attr(\"name\"));" +
-                                        $"$(\"#{AlertId}\").attr(\"name\", \"\");" +
-                                        $"if($(\"#{AlertId}\").attr(\"type\") == \"submit\")$(\"#{AlertId}\").attr(\"type\", \"button\");" +
-                                        "});");
+                                            $"$('#{AlertId}').attr(\"data-toggle\", \"modal\").attr(\"data-target\", \"#{modalId}\")" + "});");
+
             output.PostContent.SetHtmlContent(script.RenderHtmlContent());
         }
     }
