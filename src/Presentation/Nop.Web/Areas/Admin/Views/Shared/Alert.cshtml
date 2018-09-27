@@ -16,3 +16,11 @@
         </div>        
     </div>
 </div>
+<button type="submit" class="btn btn-default" id="@(Model.AlertId)" style="display:none" />
+<script>
+    $(document).ready(function () {
+        $("#@(Model.AlertId)-action-alert-submit-button").bind("click", function () {
+            $('#@(Model.AlertId)-action-alert').modal('toggle');
+        });
+    });
+</script>

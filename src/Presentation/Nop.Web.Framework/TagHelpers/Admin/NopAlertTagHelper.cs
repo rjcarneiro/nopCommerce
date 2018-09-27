@@ -12,10 +12,10 @@ namespace Nop.Web.Framework.TagHelpers.Admin
     /// <summary>
     /// nop-alert tag helper
     /// </summary>
-    [HtmlTargetElement("nop-alert", Attributes = ButtonIdAttributeName + "," + AlertMessageName, TagStructure = TagStructure.WithoutEndTag)]
+    [HtmlTargetElement("nop-alert", Attributes = AlertNameId + "," + AlertMessageName, TagStructure = TagStructure.WithoutEndTag)]
     public class NopAlertTagHelper : TagHelper
     {
-        private const string ButtonIdAttributeName = "asp-button-id";
+        private const string AlertNameId = "asp-alert-id";
         private const string AlertMessageName = "asp-alert-message";
 
         private readonly IHtmlHelper _htmlHelper;
@@ -26,10 +26,10 @@ namespace Nop.Web.Framework.TagHelpers.Admin
         protected IHtmlGenerator Generator { get; set; }
 
         /// <summary>
-        /// Button identifier
+        /// Alert identifier
         /// </summary>
-        [HtmlAttributeName(ButtonIdAttributeName)]
-        public string ButtonId { get; set; }
+        [HtmlAttributeName(AlertNameId)]
+        public string AlertId { get; set; }
 
         /// <summary>
         /// ViewContext
@@ -76,10 +76,11 @@ namespace Nop.Web.Framework.TagHelpers.Admin
             var viewContextAware = _htmlHelper as IViewContextAware;
             viewContextAware?.Contextualize(ViewContext);
 
-            var modalId = new HtmlString(ButtonId + "-action-alert").ToHtmlString();
+            var modalId = new HtmlString(AlertId + "-action-alert").ToHtmlString();
 
             var actionAlertModel = new ActionAlertModel()
             {
+                AlertId = AlertId,
                 WindowId = modalId,
                 AlertMessage = Message
             };
@@ -98,10 +99,10 @@ namespace Nop.Web.Framework.TagHelpers.Admin
             //modal script
             var script = new TagBuilder("script");
             script.InnerHtml.AppendHtml("$(document).ready(function () {" +
-                                        $"$('#{ButtonId}').attr(\"data-toggle\", \"modal\").attr(\"data-target\", \"#{modalId}\");" +
-                                        $"$('#{modalId}-submit-button').attr(\"name\", $(\"#{ButtonId}\").attr(\"name\"));" +
-                                        $"$(\"#{ButtonId}\").attr(\"name\", \"\");" +
-                                        $"if($(\"#{ButtonId}\").attr(\"type\") == \"submit\")$(\"#{ButtonId}\").attr(\"type\", \"button\");" +
+                                        $"$('#{AlertId}').attr(\"data-toggle\", \"modal\").attr(\"data-target\", \"#{modalId}\");" +
+                                        $"$('#{modalId}-submit-button').attr(\"name\", $(\"#{AlertId}\").attr(\"name\"));" +
+                                        $"$(\"#{AlertId}\").attr(\"name\", \"\");" +
+                                        $"if($(\"#{AlertId}\").attr(\"type\") == \"submit\")$(\"#{AlertId}\").attr(\"type\", \"button\");" +
                                         "});");
             output.PostContent.SetHtmlContent(script.RenderHtmlContent());
         }

@@ -158,7 +158,6 @@
                         </script>
                         <button type="submit" class="btn btn-default" id="btnMarkPERC" style="display:none" />
                         <button type="submit" class="btn btn-default" id="btnMarkPSC" style="display:none" />
-                        <button type="submit" class="btn btn-default" id="btnAlert" style="display:none" />
 
                         <script>
                             var selectedId;
@@ -180,15 +179,12 @@
                                             grid.dataSource.read();
                                         },
                                         error: function (xhr, ajaxOptions, thrownError) {
-                                            CallAlert();
+                                            $("#currencyAlert").click();
+                                            //alert("qwe");
                                         }
                                     });
                                     $('#btnMarkPSC-action-confirmation').modal('toggle');
-                                });
-
-                                $("#btnAlert-action-alert-submit-button").bind("click", function () {
-                                    $('#btnAlert-action-alert').modal('toggle');
-                                });
+                                });                                
 
                                 $("#btnMarkPERC-action-confirmation-submit-button").bind("click", function () {
                                     var postData = {
@@ -205,17 +201,13 @@
                                             grid.dataSource.read();
                                         },
                                         error: function (xhr, ajaxOptions, thrownError) {
-                                            CallAlert();
+                                            $("#currencyAlert").click();
                                         }
                                     });
                                     $('#btnMarkPERC-action-confirmation').modal('toggle');
                                 });
 
                             });
-
-                            function CallAlert() {
-                                $("#btnAlert").click();
-                            }
 
                             function markAsPrimaryExchangeRateCurrency(id) {
                                 selectedId = id;
@@ -303,7 +295,7 @@
                                             grid.dataSource.read();
                                         },
                                         error: function (xhr, ajaxOptions, thrownError) {
-                                            $("#btnAlert").click();
+                                            $("#currencyAlert").click();
                                         }
                                     });
                                 }
@@ -335,4 +327,4 @@
 </form>
 <nop-action-confirmation asp-button-id="btnMarkPERC" asp-additional-confirm="Admin.Configuration.Currencies.AdditionalConfirm" />
 <nop-action-confirmation asp-button-id="btnMarkPSC" asp-additional-confirm="Admin.Configuration.Currencies.AdditionalConfirm"/>
-<nop-alert asp-button-id="btnAlert" asp-alert-message="Admin.Common.Alert.Currency.Error"/>
+<nop-alert asp-alert-id="currencyAlert" asp-alert-message="Admin.Common.Alert.Currency.Error"/>
