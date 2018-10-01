@@ -160,7 +160,7 @@ namespace Nop.Services.Seo
         /// Generate URLs for the sitemap
         /// </summary>
         /// <param name="langs">Language list</param>
-        /// <returns>List of URL for the sitemap</returns>
+        /// <returns>List of sitemap URLs</returns>
         protected virtual IList<SitemapUrl> GenerateUrls(IList<Language> langs = null)
         {
             var sitemapUrls = new List<SitemapUrl>
