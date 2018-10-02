@@ -114,6 +114,19 @@ namespace Nop.Services.Seo
             }
 
             /// <summary>
+            /// Ctor
+            /// </summary>
+            /// <param name="location">URL of the page</param>
+            /// <param name="anotheUrl">The another site map url</param>
+            public SitemapUrl(string location, SitemapUrl anotheUrl)
+            {
+                Location = location;
+                AlternateLocations = anotheUrl.AlternateLocations;
+                UpdateFrequency = anotheUrl.UpdateFrequency;
+                UpdatedOn = anotheUrl.UpdatedOn;
+            }
+
+            /// <summary>
             /// Gets or sets URL of the page
             /// </summary>
             public string Location { get; set; }
@@ -325,6 +338,9 @@ namespace Nop.Services.Seo
             var localizedUrls = languages.Select(lang => {
                 var currentUrl = urlHelper.RouteUrl(routeName, routeParams?.Invoke(lang.Id), GetHttpProtocol());
 
+                if (string.IsNullOrEmpty(currentUrl))
+                    return null;
+
                 //Extract server and path from url
                 var scheme = new Uri(currentUrl).GetComponents(UriComponents.SchemeAndServer, UriFormat.Unescaped);
                 var path = new Uri(currentUrl).PathAndQuery;
@@ -395,42 +411,54 @@ namespace Nop.Services.Seo
                 //write URLs from list to the sitemap
                 foreach (var sitemapUrl in sitemapUrls)
                 {
-                    var urls = sitemapUrl.AlternateLocations.Any()
-                        ? sitemapUrl.AlternateLocations
-                        : new List<string> {sitemapUrl.Location};
+                    //write base url
+                    WriteSitemapUrl(writer, sitemapUrl);
 
-                    foreach (var url in urls)
+                    //write all alternate url if exists
+                    foreach (var alternate in sitemapUrl.AlternateLocations
+                        .Where(p => !p.Equals(sitemapUrl.Location, StringComparison.InvariantCultureIgnoreCase)))
                     {
-                        writer.WriteStartElement("url");
-
-                        var loc = XmlHelper.XmlEncode(url);
-                        writer.WriteElementString("loc", loc);
-
-                        //write all related urls
-                        foreach (var alternate in sitemapUrl.AlternateLocations)
-                        {
-                            //extract seo code
-                            var altLoc = XmlHelper.XmlEncode(alternate);
-                            var altLocPath = new Uri(altLoc).PathAndQuery;
-                            altLocPath.IsLocalizedUrl(_actionContextAccessor.ActionContext.HttpContext.Request.PathBase, true, out var lang);
-
-                            if (string.IsNullOrEmpty(lang?.UniqueSeoCode))
-                                continue;
-
-                            writer.WriteStartElement("xhtml:link");
-                            writer.WriteAttributeString("rel", "alternate");
-                            writer.WriteAttributeString("hreflang", lang.UniqueSeoCode);
-                            writer.WriteAttributeString("href", altLoc);
-                            writer.WriteEndElement();
-                        }
-                        
-
-                        writer.WriteElementString("changefreq", sitemapUrl.UpdateFrequency.ToString().ToLowerInvariant());
-                        writer.WriteElementString("lastmod", sitemapUrl.UpdatedOn.ToString(NopSeoDefaults.SitemapDateFormat, CultureInfo.InvariantCulture));
-                        writer.WriteEndElement();
+                        WriteSitemapUrl(writer, new SitemapUrl(alternate, sitemapUrl));
                     }
                 }
+
+                writer.WriteEndElement();
             }
+        }
+
+        /// <summary>
+        /// Write sitemap
+        /// </summary>
+        /// <param name="writer">XML stream writer</param>
+        /// <param name="sitemapUrl">Sitemap URL</param>
+        protected virtual void WriteSitemapUrl(XmlTextWriter writer, SitemapUrl sitemapUrl)
+        {
+            writer.WriteStartElement("url");
+
+            var loc = XmlHelper.XmlEncode(sitemapUrl.Location);
+            writer.WriteElementString("loc", loc);
+
+            //write all related url
+            foreach (var alternate in sitemapUrl.AlternateLocations)
+            {
+                //extract seo code
+                var altLoc = XmlHelper.XmlEncode(alternate);
+                var altLocPath = new Uri(altLoc).PathAndQuery;
+                altLocPath.IsLocalizedUrl(_actionContextAccessor.ActionContext.HttpContext.Request.PathBase, true, out var lang);
+
+                if (string.IsNullOrEmpty(lang?.UniqueSeoCode))
+                    continue;
+
+                writer.WriteStartElement("xhtml:link");
+                writer.WriteAttributeString("rel", "alternate");
+                writer.WriteAttributeString("hreflang", lang.UniqueSeoCode);
+                writer.WriteAttributeString("href", altLoc);
+                writer.WriteEndElement();
+            }
+
+            writer.WriteElementString("changefreq", sitemapUrl.UpdateFrequency.ToString().ToLowerInvariant());
+            writer.WriteElementString("lastmod", sitemapUrl.UpdatedOn.ToString(NopSeoDefaults.SitemapDateFormat, CultureInfo.InvariantCulture));
+            writer.WriteEndElement();
         }
 
         #endregion
