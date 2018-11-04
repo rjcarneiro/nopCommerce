@@ -69,8 +69,6 @@ namespace Nop.Web.Areas.Admin.Controllers
         private readonly IShippingService _shippingService;
         private readonly IShoppingCartService _shoppingCartService;
         private readonly ISpecificationAttributeService _specificationAttributeService;
-        private readonly IStoreMappingService _storeMappingService;
-        private readonly IStoreService _storeService;
         private readonly IUrlRecordService _urlRecordService;
         private readonly IWorkContext _workContext;
         private readonly VendorSettings _vendorSettings;
@@ -107,8 +105,6 @@ namespace Nop.Web.Areas.Admin.Controllers
             IShippingService shippingService,
             IShoppingCartService shoppingCartService,
             ISpecificationAttributeService specificationAttributeService,
-            IStoreMappingService storeMappingService,
-            IStoreService storeService,
             IUrlRecordService urlRecordService,
             IWorkContext workContext,
             VendorSettings vendorSettings)
@@ -141,8 +137,6 @@ namespace Nop.Web.Areas.Admin.Controllers
             this._shippingService = shippingService;
             this._shoppingCartService = shoppingCartService;
             this._specificationAttributeService = specificationAttributeService;
-            this._storeMappingService = storeMappingService;
-            this._storeService = storeService;
             this._urlRecordService = urlRecordService;
             this._workContext = workContext;
             this._vendorSettings = vendorSettings;
@@ -249,30 +243,6 @@ namespace Nop.Web.Areas.Admin.Controllers
                     var aclRecordToDelete = existingAclRecords.FirstOrDefault(acl => acl.CustomerRoleId == customerRole.Id);
                     if (aclRecordToDelete != null)
                         _aclService.DeleteAclRecord(aclRecordToDelete);
-                }
-            }
-        }
-
-        protected virtual void SaveStoreMappings(Product product, ProductModel model)
-        {
-            product.LimitedToStores = model.SelectedStoreIds.Any();
-
-            var existingStoreMappings = _storeMappingService.GetStoreMappings(product);
-            var allStores = _storeService.GetAllStores();
-            foreach (var store in allStores)
-            {
-                if (model.SelectedStoreIds.Contains(store.Id))
-                {
-                    //new store
-                    if (existingStoreMappings.Count(sm => sm.StoreId == store.Id) == 0)
-                        _storeMappingService.InsertStoreMapping(product, store.Id);
-                }
-                else
-                {
-                    //remove store
-                    var storeMappingToDelete = existingStoreMappings.FirstOrDefault(sm => sm.StoreId == store.Id);
-                    if (storeMappingToDelete != null)
-                        _storeMappingService.DeleteStoreMapping(storeMappingToDelete);
                 }
             }
         }
@@ -863,7 +833,7 @@ namespace Nop.Web.Areas.Admin.Controllers
                 SaveProductAcl(product, model);
 
                 //stores
-                SaveStoreMappings(product, model);
+                _productService.UpdateProductStoreMappings(product, model.SelectedStoreIds);
 
                 //discounts
                 SaveDiscountMappings(product, model);
@@ -991,7 +961,7 @@ namespace Nop.Web.Areas.Admin.Controllers
                 SaveProductAcl(product, model);
 
                 //stores
-                SaveStoreMappings(product, model);
+                _productService.UpdateProductStoreMappings(product, model.SelectedStoreIds);
 
                 //discounts
                 SaveDiscountMappings(product, model);
@@ -2354,16 +2324,11 @@ namespace Nop.Web.Areas.Admin.Controllers
 
             if (ModelState.IsValid)
             {
-                var tierPrice = new TierPrice
-                {
-                    ProductId = model.ProductId,
-                    StoreId = model.StoreId,
-                    CustomerRoleId = model.CustomerRoleId > 0 ? model.CustomerRoleId : (int?)null,
-                    Quantity = model.Quantity,
-                    Price = model.Price,
-                    StartDateTimeUtc = model.StartDateTimeUtc,
-                    EndDateTimeUtc = model.EndDateTimeUtc
-                };
+                //fill entity from model
+                var tierPrice = model.ToEntity<TierPrice>();
+
+                tierPrice.CustomerRoleId = model.CustomerRoleId > 0 ? model.CustomerRoleId : (int?)null;
+
                 _productService.InsertTierPrice(tierPrice);
 
                 //update "HasTierPrices" property
@@ -2426,10 +2391,9 @@ namespace Nop.Web.Areas.Admin.Controllers
 
             if (ModelState.IsValid)
             {
-                tierPrice.StoreId = model.StoreId;
+                //fill entity from model
+                tierPrice = model.ToEntity(tierPrice);
                 tierPrice.CustomerRoleId = model.CustomerRoleId > 0 ? model.CustomerRoleId : (int?)null;
-                tierPrice.Quantity = model.Quantity;
-                tierPrice.Price = model.Price;
                 tierPrice.StartDateTimeUtc = model.StartDateTimeUtc;
                 tierPrice.EndDateTimeUtc = model.EndDateTimeUtc;
                 _productService.UpdateTierPrice(tierPrice);
@@ -2548,20 +2512,8 @@ namespace Nop.Web.Areas.Admin.Controllers
             }
 
             //insert mapping
-            var productAttributeMapping = new ProductAttributeMapping
-            {
-                ProductId = model.ProductId,
-                ProductAttributeId = model.ProductAttributeId,
-                TextPrompt = model.TextPrompt,
-                IsRequired = model.IsRequired,
-                AttributeControlTypeId = model.AttributeControlTypeId,
-                DisplayOrder = model.DisplayOrder,
-                ValidationMinLength = model.ValidationMinLength,
-                ValidationMaxLength = model.ValidationMaxLength,
-                ValidationFileAllowedExtensions = model.ValidationFileAllowedExtensions,
-                ValidationFileMaximumSize = model.ValidationFileMaximumSize,
-                DefaultValue = model.DefaultValue
-            };
+            var productAttributeMapping = model.ToEntity<ProductAttributeMapping>();
+
             _productAttributeService.InsertProductAttributeMapping(productAttributeMapping);
             UpdateLocales(productAttributeMapping, model);
 
@@ -2669,16 +2621,8 @@ namespace Nop.Web.Areas.Admin.Controllers
                 return View(model);
             }
 
-            productAttributeMapping.ProductAttributeId = model.ProductAttributeId;
-            productAttributeMapping.TextPrompt = model.TextPrompt;
-            productAttributeMapping.IsRequired = model.IsRequired;
-            productAttributeMapping.AttributeControlTypeId = model.AttributeControlTypeId;
-            productAttributeMapping.DisplayOrder = model.DisplayOrder;
-            productAttributeMapping.ValidationMinLength = model.ValidationMinLength;
-            productAttributeMapping.ValidationMaxLength = model.ValidationMaxLength;
-            productAttributeMapping.ValidationFileAllowedExtensions = model.ValidationFileAllowedExtensions;
-            productAttributeMapping.ValidationFileMaximumSize = model.ValidationFileMaximumSize;
-            productAttributeMapping.DefaultValue = model.DefaultValue;
+            //fill entity from model
+            productAttributeMapping = model.ToEntity(productAttributeMapping);
             _productAttributeService.UpdateProductAttributeMapping(productAttributeMapping);
 
             UpdateLocales(productAttributeMapping, model);
@@ -2817,24 +2761,10 @@ namespace Nop.Web.Areas.Admin.Controllers
 
             if (ModelState.IsValid)
             {
-                var pav = new ProductAttributeValue
-                {
-                    ProductAttributeMappingId = model.ProductAttributeMappingId,
-                    AttributeValueTypeId = model.AttributeValueTypeId,
-                    AssociatedProductId = model.AssociatedProductId,
-                    Name = model.Name,
-                    ColorSquaresRgb = model.ColorSquaresRgb,
-                    ImageSquaresPictureId = model.ImageSquaresPictureId,
-                    PriceAdjustment = model.PriceAdjustment,
-                    PriceAdjustmentUsePercentage = model.PriceAdjustmentUsePercentage,
-                    WeightAdjustment = model.WeightAdjustment,
-                    Cost = model.Cost,
-                    CustomerEntersQty = model.CustomerEntersQty,
-                    Quantity = model.CustomerEntersQty ? 1 : model.Quantity,
-                    IsPreSelected = model.IsPreSelected,
-                    DisplayOrder = model.DisplayOrder,
-                    PictureId = model.PictureId
-                };
+                //fill entity from model
+                var pav = model.ToEntity<ProductAttributeValue>();
+
+                pav.Quantity = model.CustomerEntersQty ? 1 : model.Quantity;
 
                 _productAttributeService.InsertProductAttributeValue(pav);
                 UpdateLocales(pav, model);
@@ -2928,20 +2858,9 @@ namespace Nop.Web.Areas.Admin.Controllers
 
             if (ModelState.IsValid)
             {
-                productAttributeValue.AttributeValueTypeId = model.AttributeValueTypeId;
-                productAttributeValue.AssociatedProductId = model.AssociatedProductId;
-                productAttributeValue.Name = model.Name;
-                productAttributeValue.ColorSquaresRgb = model.ColorSquaresRgb;
-                productAttributeValue.ImageSquaresPictureId = model.ImageSquaresPictureId;
-                productAttributeValue.PriceAdjustment = model.PriceAdjustment;
-                productAttributeValue.PriceAdjustmentUsePercentage = model.PriceAdjustmentUsePercentage;
-                productAttributeValue.WeightAdjustment = model.WeightAdjustment;
-                productAttributeValue.Cost = model.Cost;
-                productAttributeValue.CustomerEntersQty = model.CustomerEntersQty;
+                //fill entity from model
+                productAttributeValue = model.ToEntity(productAttributeValue);
                 productAttributeValue.Quantity = model.CustomerEntersQty ? 1 : model.Quantity;
-                productAttributeValue.IsPreSelected = model.IsPreSelected;
-                productAttributeValue.DisplayOrder = model.DisplayOrder;
-                productAttributeValue.PictureId = model.PictureId;
                 _productAttributeService.UpdateProductAttributeValue(productAttributeValue);
 
                 UpdateLocales(productAttributeValue, model);
@@ -3159,19 +3078,11 @@ namespace Nop.Web.Areas.Admin.Controllers
             if (!warnings.Any())
             {
                 //save combination
-                var combination = new ProductAttributeCombination
-                {
-                    ProductId = product.Id,
-                    AttributesXml = attributesXml,
-                    StockQuantity = model.StockQuantity,
-                    AllowOutOfStockOrders = model.AllowOutOfStockOrders,
-                    Sku = model.Sku,
-                    ManufacturerPartNumber = model.ManufacturerPartNumber,
-                    Gtin = model.Gtin,
-                    OverriddenPrice = model.OverriddenPrice,
-                    NotifyAdminForQuantityBelow = model.NotifyAdminForQuantityBelow,
-                    PictureId = model.PictureId
-                };
+                var combination = model.ToEntity<ProductAttributeCombination>();
+
+                //fill attributes
+                combination.AttributesXml = attributesXml;
+
                 _productAttributeService.InsertProductAttributeCombination(combination);
 
                 //quantity change history
@@ -3295,19 +3206,27 @@ namespace Nop.Web.Areas.Admin.Controllers
             if (_workContext.CurrentVendor != null && product.VendorId != _workContext.CurrentVendor.Id)
                 return RedirectToAction("List", "Product");
 
-            if (ModelState.IsValid)
+            //attributes
+            var warnings = new List<string>();
+            var attributesXml = GetAttributesXmlForProductAttributeCombination(model.Form, warnings, product.Id);
+
+            warnings.AddRange(_shoppingCartService.GetShoppingCartItemAttributeWarnings(_workContext.CurrentCustomer,
+                ShoppingCartType.ShoppingCart, product, 1, attributesXml, true));
+
+            //check whether the same attribute combination already exists
+            var existingCombination = _productAttributeParser.FindProductAttributeCombination(product, attributesXml);
+            if (existingCombination != null)
+                warnings.Add(_localizationService.GetResource("Admin.Catalog.Products.ProductAttributes.AttributeCombinations.AlreadyExists"));
+
+            if (!warnings.Any() && ModelState.IsValid)
             {
                 var previousStockQuantity = combination.StockQuantity;
 
                 //save combination
-                combination.AllowOutOfStockOrders = model.AllowOutOfStockOrders;
-                combination.Gtin = model.Gtin;
-                combination.ManufacturerPartNumber = model.ManufacturerPartNumber;
-                combination.NotifyAdminForQuantityBelow = model.NotifyAdminForQuantityBelow;
-                combination.OverriddenPrice = model.OverriddenPrice;
-                combination.PictureId = model.PictureId;
-                combination.Sku = model.Sku;
-                combination.StockQuantity = model.StockQuantity;
+                //fill entity from model
+                combination = model.ToEntity(combination);
+                combination.AttributesXml = attributesXml;
+
                 _productAttributeService.UpdateProductAttributeCombination(combination);
 
                 //quantity change history
@@ -3318,9 +3237,10 @@ namespace Nop.Web.Areas.Admin.Controllers
 
                 return View(model);
             }
-
+                        
             //prepare model
             model = _productModelFactory.PrepareProductAttributeCombinationModel(model, product, combination, true);
+            model.Warnings = warnings;
 
             //if we got this far, something failed, redisplay form
             return View(model);

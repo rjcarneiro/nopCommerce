@@ -526,7 +526,7 @@ namespace Nop.Services.Installation
                     Rate = 0.86M,
                     DisplayLocale = string.Empty,
                     //CustomFormatting = "ˆ0.00",
-                    CustomFormatting = "€0.00",
+                    CustomFormatting = string.Format("{0}0.00", "\u20ac"), //euro symbol
                     Published = true,
                     DisplayOrder = 6,
                     CreatedOnUtc = DateTime.UtcNow,
@@ -6193,6 +6193,10 @@ namespace Nop.Services.Installation
                 DefaultPasswordFormat = PasswordFormat.Hashed,
                 HashedPasswordFormat = "SHA512",
                 PasswordMinLength = 6,
+                PasswordRequireDigit = false,
+                PasswordRequireLowercase = false,
+                PasswordRequireNonAlphanumeric = false,
+                PasswordRequireUppercase = false,
                 UnduplicatedPasswordsNumber = 4,
                 PasswordRecoveryLinkDaysValid = 7,
                 PasswordLifetime = 90,
@@ -6611,6 +6615,11 @@ namespace Nop.Services.Installation
             {
                 ReCaptchaDefaultLanguage = string.Empty,
                 AutomaticallyChooseLanguage = true
+            });
+
+            settingService.SaveSetting(new MessagesSettings
+            {
+                UsePopupNotifications = false
             });
         }
 
