@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using Nop.Core;
 using Nop.Core.Domain.Catalog;
@@ -31,7 +31,7 @@ namespace Nop.Services.Catalog
         /// Gets all products displayed on the home page
         /// </summary>
         /// <returns>Products</returns>
-        IList<Product> GetAllProductsDisplayedOnHomePage();
+        IList<Product> GetAllProductsDisplayedOnHomepage();
 
         /// <summary>
         /// Gets product
@@ -398,6 +398,14 @@ namespace Nop.Services.Catalog
         /// <param name="product">Product</param>
         /// <param name="quantity">Quantity, must be negative</param>
         void ReserveInventory(Product product, int quantity);
+
+        /// <summary>
+        /// Balance the given quantity in the warehouses.
+        /// </summary>
+        /// <param name="product">Product</param>
+        /// <param name="warehouseId">Warehouse identifier</param>
+        /// <param name="quantity">Quantity</param>
+        void BalanceInventory(Product product, int warehouseId, int quantity);
 
         /// <summary>
         /// Unblocks the given quantity reserved items in the warehouses

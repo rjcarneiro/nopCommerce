@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using Nop.Core;
@@ -29,7 +29,6 @@ namespace Nop.Services.Catalog
         private readonly IRepository<StoreMapping> _storeMappingRepository;
         private readonly IStoreContext _storeContext;
         private readonly IWorkContext _workContext;
-        private readonly string _entityName;
 
         #endregion
 
@@ -46,17 +45,16 @@ namespace Nop.Services.Catalog
             IStoreContext storeContext,
             IWorkContext workContext)
         {
-            this._catalogSettings = catalogSettings;
-            this._cacheManager = cacheManager;
-            this._eventPublisher = eventPublisher;
-            this._aclRepository = aclRepository;
-            this._manufacturerRepository = manufacturerRepository;
-            this._productRepository = productRepository;
-            this._productManufacturerRepository = productManufacturerRepository;
-            this._storeMappingRepository = storeMappingRepository;
-            this._storeContext = storeContext;
-            this._workContext = workContext;
-            this._entityName = typeof(Manufacturer).Name;
+            _catalogSettings = catalogSettings;
+            _cacheManager = cacheManager;
+            _eventPublisher = eventPublisher;
+            _aclRepository = aclRepository;
+            _manufacturerRepository = manufacturerRepository;
+            _productRepository = productRepository;
+            _productManufacturerRepository = productManufacturerRepository;
+            _storeMappingRepository = storeMappingRepository;
+            _storeContext = storeContext;
+            _workContext = workContext;
         }
 
         #endregion
@@ -77,6 +75,21 @@ namespace Nop.Services.Catalog
 
             //event notification
             _eventPublisher.EntityDeleted(manufacturer);
+        }
+
+        /// <summary>
+        /// Delete manufacturers
+        /// </summary>
+        /// <param name="manufacturers">Manufacturers</param>
+        public virtual void DeleteManufacturers(IList<Manufacturer> manufacturers)
+        {
+            if (manufacturers == null)
+                throw new ArgumentNullException(nameof(manufacturers));
+
+            foreach (var manufacturer in manufacturers)
+            {
+                DeleteManufacturer(manufacturer);
+            }
         }
 
         /// <summary>
@@ -111,7 +124,7 @@ namespace Nop.Services.Catalog
                 var allowedCustomerRolesIds = _workContext.CurrentCustomer.GetCustomerRoleIds();
                 query = from m in query
                     join acl in _aclRepository.Table
-                        on new { c1 = m.Id, c2 = _entityName } equals new { c1 = acl.EntityId, c2 = acl.EntityName } into m_acl
+                        on new { c1 = m.Id, c2 = nameof(Manufacturer) } equals new { c1 = acl.EntityId, c2 = acl.EntityName } into m_acl
                     from acl in m_acl.DefaultIfEmpty()
                     where !m.SubjectToAcl || allowedCustomerRolesIds.Contains(acl.CustomerRoleId)
                     select m;
@@ -122,7 +135,7 @@ namespace Nop.Services.Catalog
                 //Store mapping
                 query = from m in query
                     join sm in _storeMappingRepository.Table
-                        on new { c1 = m.Id, c2 = _entityName } equals new { c1 = sm.EntityId, c2 = sm.EntityName } into m_sm
+                        on new { c1 = m.Id, c2 = nameof(Manufacturer) } equals new { c1 = sm.EntityId, c2 = sm.EntityName } into m_sm
                     from sm in m_sm.DefaultIfEmpty()
                     where !m.LimitedToStores || storeId == sm.StoreId
                     select m;
@@ -148,6 +161,23 @@ namespace Nop.Services.Catalog
         }
 
         /// <summary>
+        /// Gets manufacturers by identifier
+        /// </summary>
+        /// <param name="manufacturerIds">manufacturer identifiers</param>
+        /// <returns>Manufacturers</returns>
+        public virtual List<Manufacturer> GetManufacturersByIds(int[] manufacturerIds)
+        {
+            if (manufacturerIds == null || manufacturerIds.Length == 0)
+                return new List<Manufacturer>();
+
+            var query = from p in _manufacturerRepository.Table
+                        where manufacturerIds.Contains(p.Id) && !p.Deleted
+                        select p;
+
+            return query.ToList();
+        }
+
+        /// <summary>
         /// Inserts a manufacturer
         /// </summary>
         /// <param name="manufacturer">Manufacturer</param>
@@ -159,8 +189,8 @@ namespace Nop.Services.Catalog
             _manufacturerRepository.Insert(manufacturer);
 
             //cache
-            _cacheManager.RemoveByPattern(NopCatalogDefaults.ManufacturersPatternCacheKey);
-            _cacheManager.RemoveByPattern(NopCatalogDefaults.ProductManufacturersPatternCacheKey);
+            _cacheManager.RemoveByPrefix(NopCatalogDefaults.ManufacturersPrefixCacheKey);
+            _cacheManager.RemoveByPrefix(NopCatalogDefaults.ProductManufacturersPrefixCacheKey);
 
             //event notification
             _eventPublisher.EntityInserted(manufacturer);
@@ -178,8 +208,8 @@ namespace Nop.Services.Catalog
             _manufacturerRepository.Update(manufacturer);
 
             //cache
-            _cacheManager.RemoveByPattern(NopCatalogDefaults.ManufacturersPatternCacheKey);
-            _cacheManager.RemoveByPattern(NopCatalogDefaults.ProductManufacturersPatternCacheKey);
+            _cacheManager.RemoveByPrefix(NopCatalogDefaults.ManufacturersPrefixCacheKey);
+            _cacheManager.RemoveByPrefix(NopCatalogDefaults.ProductManufacturersPrefixCacheKey);
 
             //event notification
             _eventPublisher.EntityUpdated(manufacturer);
@@ -197,8 +227,8 @@ namespace Nop.Services.Catalog
             _productManufacturerRepository.Delete(productManufacturer);
 
             //cache
-            _cacheManager.RemoveByPattern(NopCatalogDefaults.ManufacturersPatternCacheKey);
-            _cacheManager.RemoveByPattern(NopCatalogDefaults.ProductManufacturersPatternCacheKey);
+            _cacheManager.RemoveByPrefix(NopCatalogDefaults.ManufacturersPrefixCacheKey);
+            _cacheManager.RemoveByPrefix(NopCatalogDefaults.ProductManufacturersPrefixCacheKey);
 
             //event notification
             _eventPublisher.EntityDeleted(productManufacturer);
@@ -238,7 +268,7 @@ namespace Nop.Services.Catalog
                         query = from pm in query
                                 join m in _manufacturerRepository.Table on pm.ManufacturerId equals m.Id
                                 join acl in _aclRepository.Table
-                                on new { c1 = m.Id, c2 = _entityName } equals new { c1 = acl.EntityId, c2 = acl.EntityName } into m_acl
+                                on new { c1 = m.Id, c2 = nameof(Manufacturer) } equals new { c1 = acl.EntityId, c2 = acl.EntityName } into m_acl
                                 from acl in m_acl.DefaultIfEmpty()
                                 where !m.SubjectToAcl || allowedCustomerRolesIds.Contains(acl.CustomerRoleId)
                                 select pm;
@@ -251,7 +281,7 @@ namespace Nop.Services.Catalog
                         query = from pm in query
                                 join m in _manufacturerRepository.Table on pm.ManufacturerId equals m.Id
                                 join sm in _storeMappingRepository.Table
-                                on new { c1 = m.Id, c2 = _entityName } equals new { c1 = sm.EntityId, c2 = sm.EntityName } into m_sm
+                                on new { c1 = m.Id, c2 = nameof(Manufacturer) } equals new { c1 = sm.EntityId, c2 = sm.EntityName } into m_sm
                                 from sm in m_sm.DefaultIfEmpty()
                                 where !m.LimitedToStores || currentStoreId == sm.StoreId
                                 select pm;
@@ -296,7 +326,7 @@ namespace Nop.Services.Catalog
                         query = from pm in query
                                 join m in _manufacturerRepository.Table on pm.ManufacturerId equals m.Id
                                 join acl in _aclRepository.Table
-                                on new { c1 = m.Id, c2 = _entityName } equals new { c1 = acl.EntityId, c2 = acl.EntityName } into m_acl
+                                on new { c1 = m.Id, c2 = nameof(Manufacturer) } equals new { c1 = acl.EntityId, c2 = acl.EntityName } into m_acl
                                 from acl in m_acl.DefaultIfEmpty()
                                 where !m.SubjectToAcl || allowedCustomerRolesIds.Contains(acl.CustomerRoleId)
                                 select pm;
@@ -309,7 +339,7 @@ namespace Nop.Services.Catalog
                         query = from pm in query
                                 join m in _manufacturerRepository.Table on pm.ManufacturerId equals m.Id
                                 join sm in _storeMappingRepository.Table
-                                on new { c1 = m.Id, c2 = _entityName } equals new { c1 = sm.EntityId, c2 = sm.EntityName } into m_sm
+                                on new { c1 = m.Id, c2 = nameof(Manufacturer) } equals new { c1 = sm.EntityId, c2 = sm.EntityName } into m_sm
                                 from sm in m_sm.DefaultIfEmpty()
                                 where !m.LimitedToStores || currentStoreId == sm.StoreId
                                 select pm;
@@ -348,8 +378,8 @@ namespace Nop.Services.Catalog
             _productManufacturerRepository.Insert(productManufacturer);
 
             //cache
-            _cacheManager.RemoveByPattern(NopCatalogDefaults.ManufacturersPatternCacheKey);
-            _cacheManager.RemoveByPattern(NopCatalogDefaults.ProductManufacturersPatternCacheKey);
+            _cacheManager.RemoveByPrefix(NopCatalogDefaults.ManufacturersPrefixCacheKey);
+            _cacheManager.RemoveByPrefix(NopCatalogDefaults.ProductManufacturersPrefixCacheKey);
 
             //event notification
             _eventPublisher.EntityInserted(productManufacturer);
@@ -367,8 +397,8 @@ namespace Nop.Services.Catalog
             _productManufacturerRepository.Update(productManufacturer);
 
             //cache
-            _cacheManager.RemoveByPattern(NopCatalogDefaults.ManufacturersPatternCacheKey);
-            _cacheManager.RemoveByPattern(NopCatalogDefaults.ProductManufacturersPatternCacheKey);
+            _cacheManager.RemoveByPrefix(NopCatalogDefaults.ManufacturersPrefixCacheKey);
+            _cacheManager.RemoveByPrefix(NopCatalogDefaults.ProductManufacturersPrefixCacheKey);
 
             //event notification
             _eventPublisher.EntityUpdated(productManufacturer);

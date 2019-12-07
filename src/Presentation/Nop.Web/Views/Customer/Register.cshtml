@@ -1,5 +1,4 @@
 ﻿@model RegisterModel
-@using System.Text.Encodings.Web
 @{
     Layout = "_ColumnsOne";
 
@@ -14,7 +13,7 @@
         <h1>@T("Account.Register")</h1>
     </div>
     <div class="page-body">
-        <form asp-route="Register" asp-route-returnurl="@Context.Request.Query["ReturnUrl"]" method="post">
+        <form asp-route="Register" asp-route-returnurl="@Context.Request.Query["ReturnUrl"]" method="post" autocomplete="off">
             <div asp-validation-summary="ModelOnly" class="message-error"></div>
             <div class="fieldset">
                 <div class="title">
