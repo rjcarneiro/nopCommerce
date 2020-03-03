@@ -4,10 +4,12 @@ using System.Linq;
 using System.Text.RegularExpressions;
 using System.Xml;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc.Rendering;
 using Microsoft.Net.Http.Headers;
 using Nop.Core;
 using Nop.Core.Http;
 using Nop.Core.Infrastructure;
+using Nop.Data;
 
 namespace Nop.Web.Infrastructure.Installation
 {
@@ -20,7 +22,8 @@ namespace Nop.Web.Infrastructure.Installation
 
         private readonly IHttpContextAccessor _httpContextAccessor;
         private readonly INopFileProvider _fileProvider;
-        
+        private readonly IWebHelper _webHelper;
+
         private IList<InstallationLanguage> _availableLanguages;
 
         #endregion
@@ -28,10 +31,12 @@ namespace Nop.Web.Infrastructure.Installation
         #region Ctor
 
         public InstallationLocalizationService(IHttpContextAccessor httpContextAccessor,
-            INopFileProvider fileProvider)
+            INopFileProvider fileProvider,
+            IWebHelper webHelper)
         {
             _httpContextAccessor = httpContextAccessor;
             _fileProvider = fileProvider;
+            _webHelper = webHelper;
         }
 
         #endregion
@@ -114,7 +119,8 @@ namespace Nop.Web.Infrastructure.Installation
             var cookieOptions = new CookieOptions
             {
                 Expires = DateTime.Now.AddHours(24),
-                HttpOnly = true
+                HttpOnly = true,
+                Secure = _webHelper.IsCurrentConnectionSecured()
             };
             var cookieName = $"{NopCookieDefaults.Prefix}{NopCookieDefaults.InstallationLanguageCookie}";
             httpContext.Response.Cookies.Delete(cookieName);
@@ -203,6 +209,24 @@ namespace Nop.Web.Infrastructure.Installation
 
             }
             return _availableLanguages;
+        }
+
+        /// <summary>
+        /// Get a list of available data provider types
+        /// </summary>
+        /// <returns>Available installation data provider types</returns>
+        public IList<SelectListItem> GetAvailableProviderTypes()
+        {
+            //TODO 239 need to be implemented
+            return new List<SelectListItem>
+            {
+                new SelectListItem()
+                {
+                    Value = DataProviderType.SqlServer.ToString(),
+                    Text = GetResource(DataProviderType.SqlServer.ToString()),
+                    Selected = true
+                }
+            };
         }
 
         #endregion

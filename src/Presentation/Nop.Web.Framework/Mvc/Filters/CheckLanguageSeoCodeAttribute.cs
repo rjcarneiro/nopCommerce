@@ -4,8 +4,8 @@ using System.Net;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Filters;
 using Nop.Core;
-using Nop.Core.Data;
 using Nop.Core.Domain.Localization;
+using Nop.Data;
 using Nop.Services.Localization;
 using Nop.Web.Framework.Localization;
 
@@ -14,7 +14,7 @@ namespace Nop.Web.Framework.Mvc.Filters
     /// <summary>
     /// Represents filter attribute that checks SEO friendly URLs for multiple languages and properly redirect if necessary
     /// </summary>
-    public class CheckLanguageSeoCodeAttribute : TypeFilterAttribute
+    public sealed class CheckLanguageSeoCodeAttribute : TypeFilterAttribute
     {
         #region Ctor
 
@@ -89,12 +89,12 @@ namespace Nop.Web.Framework.Mvc.Filters
 
                 //check whether current page URL is already localized URL
                 var pageUrl = _webHelper.GetRawUrl(context.HttpContext.Request);
-                if (pageUrl.IsLocalizedUrl(context.HttpContext.Request.PathBase, true, out Language _))
+                if (pageUrl.IsLocalizedUrl(context.HttpContext.Request.PathBase, true, out var _))
                     return;
 
                 //not localized yet, so redirect to the page with working language SEO code
                 pageUrl = pageUrl.AddLanguageSeoCodeToUrl(context.HttpContext.Request.PathBase, true, _workContext.WorkingLanguage);
-                context.Result = new RedirectResult(pageUrl, false);
+                context.Result = new LocalRedirectResult(pageUrl, false);
             }
 
             /// <summary>

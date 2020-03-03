@@ -12,7 +12,6 @@
     var hideSearchBlock = genericAttributeService.GetAttribute<bool>(workContext.CurrentCustomer, hideSearchBlockAttributeName);
 }
 
-<nop-antiforgery-token />
 <div class="content-header clearfix">
     <h1 class="pull-left">
         @T("Admin.Catalog.Manufacturers")
@@ -124,7 +123,7 @@
                                 IsMasterCheckBox = true,
                                 Render = new RenderCheckBox("checkbox_manufacturers"),
                                 ClassName =  NopColumnClassDefaults.CenterAll,
-                                Width = "50",
+                                Width = "50"
                             },
                             new ColumnProperty(nameof(ManufacturerModel.Name))
                             {

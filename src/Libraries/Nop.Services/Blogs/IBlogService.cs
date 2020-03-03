@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using Nop.Core;
 using Nop.Core.Domain.Blogs;
@@ -24,13 +24,6 @@ namespace Nop.Services.Blogs
         /// <param name="blogPostId">Blog post identifier</param>
         /// <returns>Blog post</returns>
         BlogPost GetBlogPostById(int blogPostId);
-
-        /// <summary>
-        /// Gets blog posts
-        /// </summary>
-        /// <param name="blogPostIds">Blog post identifiers</param>
-        /// <returns>Blog posts</returns>
-        IList<BlogPost> GetBlogPostsByIds(int[] blogPostIds);
 
         /// <summary>
         /// Gets all blog posts
@@ -159,6 +152,11 @@ namespace Nop.Services.Blogs
         /// <param name="blogComments">Blog comments</param>
         void DeleteBlogComments(IList<BlogComment> blogComments);
 
+        /// <summary>
+        /// Inserts a blog comment
+        /// </summary>
+        /// <param name="blogComment">Blog comment</param>
+        void InsertBlogComment(BlogComment blogComment);
         #endregion
     }
 }

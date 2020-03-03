@@ -37,6 +37,7 @@ namespace Nop.Plugin.Payments.Qualpay.Controllers
         #region Methods
 
         [HttpPost]
+        [IgnoreAntiforgeryToken]
         [HttpsRequirement(SslRequirement.Yes)]
         public IActionResult WebhookHandler()
         {
@@ -79,7 +80,8 @@ namespace Nop.Plugin.Payments.Qualpay.Controllers
                     return Ok();
 
                 //get all orders of this recurring payment
-                var orders = _orderService.GetOrdersByIds(recurringPayment.RecurringPaymentHistory.Select(order => order.OrderId).ToArray());
+                var recurringPaymentHistory = _orderService.GetRecurringPaymentHistory(recurringPayment);
+                var orders = _orderService.GetOrdersByIds(recurringPaymentHistory.Select(order => order.OrderId).ToArray());
 
                 //whether an order for this transaction already exists
                 var orderExists = orders.Any(order => !string.IsNullOrEmpty(order.CaptureTransactionId) &&

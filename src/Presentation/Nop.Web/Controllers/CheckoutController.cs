@@ -10,6 +10,7 @@ using Nop.Core.Domain.Orders;
 using Nop.Core.Domain.Payments;
 using Nop.Core.Domain.Shipping;
 using Nop.Core.Http.Extensions;
+using Nop.Services.Catalog;
 using Nop.Services.Common;
 using Nop.Services.Customers;
 using Nop.Services.Directory;
@@ -28,6 +29,7 @@ using Nop.Web.Models.Checkout;
 namespace Nop.Web.Controllers
 {
     [HttpsRequirement(SslRequirement.Yes)]
+    [AutoValidateAntiforgeryToken]
     public partial class CheckoutController : BasePublicController
     {
         #region Fields
@@ -46,9 +48,9 @@ namespace Nop.Web.Controllers
         private readonly IOrderService _orderService;
         private readonly IPaymentPluginManager _paymentPluginManager;
         private readonly IPaymentService _paymentService;
+        private readonly IProductService _productService;
         private readonly IShippingService _shippingService;
         private readonly IShoppingCartService _shoppingCartService;
-        private readonly IStateProvinceService _stateProvinceService;
         private readonly IStoreContext _storeContext;
         private readonly IWebHelper _webHelper;
         private readonly IWorkContext _workContext;
@@ -75,9 +77,9 @@ namespace Nop.Web.Controllers
             IOrderService orderService,
             IPaymentPluginManager paymentPluginManager,
             IPaymentService paymentService,
+            IProductService productService,
             IShippingService shippingService,
             IShoppingCartService shoppingCartService,
-            IStateProvinceService stateProvinceService,
             IStoreContext storeContext,
             IWebHelper webHelper,
             IWorkContext workContext,
@@ -100,9 +102,9 @@ namespace Nop.Web.Controllers
             _orderService = orderService;
             _paymentPluginManager = paymentPluginManager;
             _paymentService = paymentService;
+            _productService = productService;
             _shippingService = shippingService;
             _shoppingCartService = shoppingCartService;
-            _stateProvinceService = stateProvinceService;
             _storeContext = storeContext;
             _webHelper = webHelper;
             _workContext = workContext;
@@ -179,10 +181,11 @@ namespace Nop.Web.Controllers
             if (!cart.Any())
                 return RedirectToRoute("ShoppingCart");
 
+            var cartProductIds = cart.Select(ci => ci.ProductId).ToArray();
             var downloadableProductsRequireRegistration =
-                _customerSettings.RequireRegistrationForDownloadableProducts && cart.Any(sci => sci.Product.IsDownload);
+                _customerSettings.RequireRegistrationForDownloadableProducts && _productService.HasAnyDownloadableProduct(cartProductIds);
 
-            if (_workContext.CurrentCustomer.IsGuest() && (!_orderSettings.AnonymousCheckoutAllowed || downloadableProductsRequireRegistration))
+            if (_customerService.IsGuest(_workContext.CurrentCustomer) && (!_orderSettings.AnonymousCheckoutAllowed || downloadableProductsRequireRegistration))
                 return Challenge();
 
             //if we have only "button" payment methods available (displayed onthe shopping cart page, not during checkout),
@@ -214,9 +217,11 @@ namespace Nop.Web.Controllers
             //validation (each shopping cart item)
             foreach (var sci in cart)
             {
+                var product = _productService.GetProductById(sci.ProductId);
+
                 var sciWarnings = _shoppingCartService.GetShoppingCartItemWarnings(_workContext.CurrentCustomer,
                     sci.ShoppingCartType,
-                    sci.Product,
+                    product,
                     sci.StoreId,
                     sci.AttributesXml,
                     sci.CustomerEnteredPrice,
@@ -235,10 +240,11 @@ namespace Nop.Web.Controllers
             return RedirectToRoute("CheckoutBillingAddress");
         }
 
+        [IgnoreAntiforgeryToken]
         public virtual IActionResult Completed(int? orderId)
         {
             //validation
-            if (_workContext.CurrentCustomer.IsGuest() && !_orderSettings.AnonymousCheckoutAllowed)
+            if (_customerService.IsGuest(_workContext.CurrentCustomer) && !_orderSettings.AnonymousCheckoutAllowed)
                 return Challenge();
 
             Order order = null;
@@ -287,7 +293,7 @@ namespace Nop.Web.Controllers
             if (_orderSettings.OnePageCheckoutEnabled)
                 return RedirectToRoute("CheckoutOnePage");
 
-            if (_workContext.CurrentCustomer.IsGuest() && !_orderSettings.AnonymousCheckoutAllowed)
+            if (_customerService.IsGuest(_workContext.CurrentCustomer) && !_orderSettings.AnonymousCheckoutAllowed)
                 return Challenge();
 
             //model
@@ -316,21 +322,22 @@ namespace Nop.Web.Controllers
             if (_orderSettings.CheckoutDisabled)
                 return RedirectToRoute("ShoppingCart");
 
-            var address = _workContext.CurrentCustomer.Addresses.FirstOrDefault(a => a.Id == addressId);
+            var address = _customerService.GetCustomerAddress(_workContext.CurrentCustomer.Id, addressId);
+
             if (address == null)
                 return RedirectToRoute("CheckoutBillingAddress");
 
-            _workContext.CurrentCustomer.BillingAddress = address;
+            _workContext.CurrentCustomer.BillingAddressId = address.Id;
             _customerService.UpdateCustomer(_workContext.CurrentCustomer);
 
             var cart = _shoppingCartService.GetShoppingCart(_workContext.CurrentCustomer, ShoppingCartType.ShoppingCart, _storeContext.CurrentStore.Id);
 
             //ship to the same address?
             //by default Shipping is available if the country is not specified
-            var shippingAllowed = _addressSettings.CountryEnabled ? address.Country?.AllowsShipping ?? false : true;
+            var shippingAllowed = _addressSettings.CountryEnabled ? _countryService.GetCountryByAddress(address)?.AllowsShipping ?? false : true;
             if (_shippingSettings.ShipToSameAddress && shipToSameAddress && _shoppingCartService.ShoppingCartRequiresShipping(cart) && shippingAllowed)
             {
-                _workContext.CurrentCustomer.ShippingAddress = _workContext.CurrentCustomer.BillingAddress;
+                _workContext.CurrentCustomer.ShippingAddressId = _workContext.CurrentCustomer.BillingAddressId;
                 _customerService.UpdateCustomer(_workContext.CurrentCustomer);
                 //reset selected shipping method (in case if "pick up in store" was selected)
                 _genericAttributeService.SaveAttribute<ShippingOption>(_workContext.CurrentCustomer, NopCustomerDefaults.SelectedShippingOptionAttribute, null, _storeContext.CurrentStore.Id);
@@ -358,7 +365,7 @@ namespace Nop.Web.Controllers
             if (_orderSettings.OnePageCheckoutEnabled)
                 return RedirectToRoute("CheckoutOnePage");
 
-            if (_workContext.CurrentCustomer.IsGuest() && !_orderSettings.AnonymousCheckoutAllowed)
+            if (_customerService.IsGuest(_workContext.CurrentCustomer) && !_orderSettings.AnonymousCheckoutAllowed)
                 return Challenge();
 
             //custom address attributes
@@ -374,37 +381,45 @@ namespace Nop.Web.Controllers
             if (ModelState.IsValid)
             {
                 //try to find an address with the same values (don't duplicate records)
-                var address = _addressService.FindAddress(_workContext.CurrentCustomer.Addresses.ToList(),
+                var address = _addressService.FindAddress(_customerService.GetAddressesByCustomerId(_workContext.CurrentCustomer.Id).ToList(),
                     newAddress.FirstName, newAddress.LastName, newAddress.PhoneNumber,
                     newAddress.Email, newAddress.FaxNumber, newAddress.Company,
                     newAddress.Address1, newAddress.Address2, newAddress.City,
                     newAddress.County, newAddress.StateProvinceId, newAddress.ZipPostalCode,
                     newAddress.CountryId, customAttributes);
+
                 if (address == null)
                 {
                     //address is not found. let's create a new one
                     address = newAddress.ToEntity();
                     address.CustomAttributes = customAttributes;
                     address.CreatedOnUtc = DateTime.UtcNow;
+
                     //some validation
                     if (address.CountryId == 0)
                         address.CountryId = null;
                     if (address.StateProvinceId == 0)
                         address.StateProvinceId = null;
-                    //_workContext.CurrentCustomer.Addresses.Add(address);
-                    _workContext.CurrentCustomer.CustomerAddressMappings.Add(new CustomerAddressMapping { Address = address });
+                    
+                    _addressService.InsertAddress(address);
+
+                    _customerService.InsertCustomerAddress(_workContext.CurrentCustomer, address);
                 }
-                _workContext.CurrentCustomer.BillingAddress = address;
+
+                _workContext.CurrentCustomer.BillingAddressId = address.Id;
+
                 _customerService.UpdateCustomer(_workContext.CurrentCustomer);
 
                 //ship to the same address?
                 if (_shippingSettings.ShipToSameAddress && model.ShipToSameAddress && _shoppingCartService.ShoppingCartRequiresShipping(cart))
                 {
-                    _workContext.CurrentCustomer.ShippingAddress = _workContext.CurrentCustomer.BillingAddress;
+                    _workContext.CurrentCustomer.ShippingAddressId = _workContext.CurrentCustomer.BillingAddressId;
                     _customerService.UpdateCustomer(_workContext.CurrentCustomer);
+
                     //reset selected shipping method (in case if "pick up in store" was selected)
                     _genericAttributeService.SaveAttribute<ShippingOption>(_workContext.CurrentCustomer, NopCustomerDefaults.SelectedShippingOptionAttribute, null, _storeContext.CurrentStore.Id);
                     _genericAttributeService.SaveAttribute<PickupPoint>(_workContext.CurrentCustomer, NopCustomerDefaults.SelectedPickupPointAttribute, null, _storeContext.CurrentStore.Id);
+
                     //limitation - "Ship to the same address" doesn't properly work in "pick up in store only" case (when no shipping plugins are available) 
                     return RedirectToRoute("CheckoutShippingMethod");
                 }
@@ -433,12 +448,12 @@ namespace Nop.Web.Controllers
             if (_orderSettings.OnePageCheckoutEnabled)
                 return RedirectToRoute("CheckoutOnePage");
 
-            if (_workContext.CurrentCustomer.IsGuest() && !_orderSettings.AnonymousCheckoutAllowed)
+            if (_customerService.IsGuest(_workContext.CurrentCustomer) && !_orderSettings.AnonymousCheckoutAllowed)
                 return Challenge();
 
             if (!_shoppingCartService.ShoppingCartRequiresShipping(cart))
             {
-                _workContext.CurrentCustomer.ShippingAddress = null;
+                _workContext.CurrentCustomer.ShippingAddressId = null;
                 _customerService.UpdateCustomer(_workContext.CurrentCustomer);
                 return RedirectToRoute("CheckoutShippingMethod");
             }
@@ -454,11 +469,12 @@ namespace Nop.Web.Controllers
             if (_orderSettings.CheckoutDisabled)
                 return RedirectToRoute("ShoppingCart");
 
-            var address = _workContext.CurrentCustomer.Addresses.FirstOrDefault(a => a.Id == addressId);
+            var address = _customerService.GetCustomerAddress(_workContext.CurrentCustomer.Id, addressId);
+
             if (address == null)
                 return RedirectToRoute("CheckoutShippingAddress");
 
-            _workContext.CurrentCustomer.ShippingAddress = address;
+            _workContext.CurrentCustomer.ShippingAddressId = address.Id;
             _customerService.UpdateCustomer(_workContext.CurrentCustomer);
 
             if (_shippingSettings.AllowPickupInStore)
@@ -486,12 +502,12 @@ namespace Nop.Web.Controllers
             if (_orderSettings.OnePageCheckoutEnabled)
                 return RedirectToRoute("CheckoutOnePage");
 
-            if (_workContext.CurrentCustomer.IsGuest() && !_orderSettings.AnonymousCheckoutAllowed)
+            if (_customerService.IsGuest(_workContext.CurrentCustomer) && !_orderSettings.AnonymousCheckoutAllowed)
                 return Challenge();
 
             if (!_shoppingCartService.ShoppingCartRequiresShipping(cart))
             {
-                _workContext.CurrentCustomer.ShippingAddress = null;
+                _workContext.CurrentCustomer.ShippingAddressId = null;
                 _customerService.UpdateCustomer(_workContext.CurrentCustomer);
                 return RedirectToRoute("CheckoutShippingMethod");
             }
@@ -502,11 +518,11 @@ namespace Nop.Web.Controllers
                 if (model.PickupInStore)
                 {
                     //no shipping address selected
-                    _workContext.CurrentCustomer.ShippingAddress = null;
+                    _workContext.CurrentCustomer.ShippingAddressId = null;
                     _customerService.UpdateCustomer(_workContext.CurrentCustomer);
 
                     var pickupPoint = form["pickup-points-id"].ToString().Split(new[] { "___" }, StringSplitOptions.None);
-                    var pickupPoints = _shippingService.GetPickupPoints(_workContext.CurrentCustomer.BillingAddress,
+                    var pickupPoints = _shippingService.GetPickupPoints(_workContext.CurrentCustomer.BillingAddressId ?? 0,
                         _workContext.CurrentCustomer, pickupPoint[1], _storeContext.CurrentStore.Id).PickupPoints.ToList();
                     var selectedPoint = pickupPoints.FirstOrDefault(x => x.Id.Equals(pickupPoint[0]));
                     if (selectedPoint == null)
@@ -543,12 +559,13 @@ namespace Nop.Web.Controllers
             if (ModelState.IsValid)
             {
                 //try to find an address with the same values (don't duplicate records)
-                var address = _addressService.FindAddress(_workContext.CurrentCustomer.Addresses.ToList(),
+                var address = _addressService.FindAddress(_customerService.GetAddressesByCustomerId(_workContext.CurrentCustomer.Id).ToList(),
                     newAddress.FirstName, newAddress.LastName, newAddress.PhoneNumber,
                     newAddress.Email, newAddress.FaxNumber, newAddress.Company,
                     newAddress.Address1, newAddress.Address2, newAddress.City,
                     newAddress.County, newAddress.StateProvinceId, newAddress.ZipPostalCode,
                     newAddress.CountryId, customAttributes);
+
                 if (address == null)
                 {
                     address = newAddress.ToEntity();
@@ -559,10 +576,14 @@ namespace Nop.Web.Controllers
                         address.CountryId = null;
                     if (address.StateProvinceId == 0)
                         address.StateProvinceId = null;
-                    //_workContext.CurrentCustomer.Addresses.Add(address);
-                    _workContext.CurrentCustomer.CustomerAddressMappings.Add(new CustomerAddressMapping { Address = address });
+
+                    _addressService.InsertAddress(address);
+
+                    _customerService.InsertCustomerAddress(_workContext.CurrentCustomer, address);
+
                 }
-                _workContext.CurrentCustomer.ShippingAddress = address;
+
+                _workContext.CurrentCustomer.ShippingAddressId = address.Id;
                 _customerService.UpdateCustomer(_workContext.CurrentCustomer);
 
                 return RedirectToRoute("CheckoutShippingMethod");
@@ -589,7 +610,7 @@ namespace Nop.Web.Controllers
             if (_orderSettings.OnePageCheckoutEnabled)
                 return RedirectToRoute("CheckoutOnePage");
 
-            if (_workContext.CurrentCustomer.IsGuest() && !_orderSettings.AnonymousCheckoutAllowed)
+            if (_customerService.IsGuest(_workContext.CurrentCustomer) && !_orderSettings.AnonymousCheckoutAllowed)
                 return Challenge();
 
             if (!_shoppingCartService.ShoppingCartRequiresShipping(cart))
@@ -599,7 +620,7 @@ namespace Nop.Web.Controllers
             }
 
             //model
-            var model = _checkoutModelFactory.PrepareShippingMethodModel(cart, _workContext.CurrentCustomer.ShippingAddress);
+            var model = _checkoutModelFactory.PrepareShippingMethodModel(cart, _customerService.GetCustomerShippingAddress(_workContext.CurrentCustomer));
 
             if (_shippingSettings.BypassShippingMethodSelectionIfOnlyOne &&
                 model.ShippingMethods.Count == 1)
@@ -632,7 +653,7 @@ namespace Nop.Web.Controllers
             if (_orderSettings.OnePageCheckoutEnabled)
                 return RedirectToRoute("CheckoutOnePage");
 
-            if (_workContext.CurrentCustomer.IsGuest() && !_orderSettings.AnonymousCheckoutAllowed)
+            if (_customerService.IsGuest(_workContext.CurrentCustomer) && !_orderSettings.AnonymousCheckoutAllowed)
                 return Challenge();
 
             if (!_shoppingCartService.ShoppingCartRequiresShipping(cart))
@@ -658,7 +679,7 @@ namespace Nop.Web.Controllers
             if (shippingOptions == null || !shippingOptions.Any())
             {
                 //not found? let's load them using shipping service
-                shippingOptions = _shippingService.GetShippingOptions(cart, _workContext.CurrentCustomer.ShippingAddress,
+                shippingOptions = _shippingService.GetShippingOptions(cart, _customerService.GetCustomerShippingAddress(_workContext.CurrentCustomer),
                     _workContext.CurrentCustomer, shippingRateComputationMethodSystemName, _storeContext.CurrentStore.Id).ShippingOptions.ToList();
             }
             else
@@ -693,7 +714,7 @@ namespace Nop.Web.Controllers
             if (_orderSettings.OnePageCheckoutEnabled)
                 return RedirectToRoute("CheckoutOnePage");
 
-            if (_workContext.CurrentCustomer.IsGuest() && !_orderSettings.AnonymousCheckoutAllowed)
+            if (_customerService.IsGuest(_workContext.CurrentCustomer) && !_orderSettings.AnonymousCheckoutAllowed)
                 return Challenge();
 
             //Check whether payment workflow is required
@@ -708,11 +729,9 @@ namespace Nop.Web.Controllers
 
             //filter by country
             var filterByCountryId = 0;
-            if (_addressSettings.CountryEnabled &&
-                _workContext.CurrentCustomer.BillingAddress != null &&
-                _workContext.CurrentCustomer.BillingAddress.Country != null)
+            if (_addressSettings.CountryEnabled)
             {
-                filterByCountryId = _workContext.CurrentCustomer.BillingAddress.Country.Id;
+                filterByCountryId = _customerService.GetCustomerBillingAddress(_workContext.CurrentCustomer)?.CountryId ?? 0;
             }
 
             //model
@@ -750,7 +769,7 @@ namespace Nop.Web.Controllers
             if (_orderSettings.OnePageCheckoutEnabled)
                 return RedirectToRoute("CheckoutOnePage");
 
-            if (_workContext.CurrentCustomer.IsGuest() && !_orderSettings.AnonymousCheckoutAllowed)
+            if (_customerService.IsGuest(_workContext.CurrentCustomer) && !_orderSettings.AnonymousCheckoutAllowed)
                 return Challenge();
 
             //reward points
@@ -797,7 +816,7 @@ namespace Nop.Web.Controllers
             if (_orderSettings.OnePageCheckoutEnabled)
                 return RedirectToRoute("CheckoutOnePage");
 
-            if (_workContext.CurrentCustomer.IsGuest() && !_orderSettings.AnonymousCheckoutAllowed)
+            if (_customerService.IsGuest(_workContext.CurrentCustomer) && !_orderSettings.AnonymousCheckoutAllowed)
                 return Challenge();
 
             //Check whether payment workflow is required
@@ -848,7 +867,7 @@ namespace Nop.Web.Controllers
             if (_orderSettings.OnePageCheckoutEnabled)
                 return RedirectToRoute("CheckoutOnePage");
 
-            if (_workContext.CurrentCustomer.IsGuest() && !_orderSettings.AnonymousCheckoutAllowed)
+            if (_customerService.IsGuest(_workContext.CurrentCustomer) && !_orderSettings.AnonymousCheckoutAllowed)
                 return Challenge();
 
             //Check whether payment workflow is required
@@ -900,7 +919,7 @@ namespace Nop.Web.Controllers
             if (_orderSettings.OnePageCheckoutEnabled)
                 return RedirectToRoute("CheckoutOnePage");
 
-            if (_workContext.CurrentCustomer.IsGuest() && !_orderSettings.AnonymousCheckoutAllowed)
+            if (_customerService.IsGuest(_workContext.CurrentCustomer) && !_orderSettings.AnonymousCheckoutAllowed)
                 return Challenge();
 
             //model
@@ -923,7 +942,7 @@ namespace Nop.Web.Controllers
             if (_orderSettings.OnePageCheckoutEnabled)
                 return RedirectToRoute("CheckoutOnePage");
 
-            if (_workContext.CurrentCustomer.IsGuest() && !_orderSettings.AnonymousCheckoutAllowed)
+            if (_customerService.IsGuest(_workContext.CurrentCustomer) && !_orderSettings.AnonymousCheckoutAllowed)
                 return Challenge();
 
             //model
@@ -988,7 +1007,7 @@ namespace Nop.Web.Controllers
 
         protected virtual JsonResult OpcLoadStepAfterShippingAddress(IList<ShoppingCartItem> cart)
         {
-            var shippingMethodModel = _checkoutModelFactory.PrepareShippingMethodModel(cart, _workContext.CurrentCustomer.ShippingAddress);
+            var shippingMethodModel = _checkoutModelFactory.PrepareShippingMethodModel(cart, _customerService.GetCustomerShippingAddress(_workContext.CurrentCustomer));
             if (_shippingSettings.BypassShippingMethodSelectionIfOnlyOne &&
                 shippingMethodModel.ShippingMethods.Count == 1)
             {
@@ -1022,11 +1041,9 @@ namespace Nop.Web.Controllers
             {
                 //filter by country
                 var filterByCountryId = 0;
-                if (_addressSettings.CountryEnabled &&
-                    _workContext.CurrentCustomer.BillingAddress != null &&
-                    _workContext.CurrentCustomer.BillingAddress.Country != null)
+                if (_addressSettings.CountryEnabled)
                 {
-                    filterByCountryId = _workContext.CurrentCustomer.BillingAddress.Country.Id;
+                    filterByCountryId = _customerService.GetCustomerBillingAddress(_workContext.CurrentCustomer)?.CountryId ?? 0;
                 }
 
                 //payment is required
@@ -1129,13 +1146,14 @@ namespace Nop.Web.Controllers
             if (!_orderSettings.OnePageCheckoutEnabled)
                 return RedirectToRoute("Checkout");
 
-            if (_workContext.CurrentCustomer.IsGuest() && !_orderSettings.AnonymousCheckoutAllowed)
+            if (_customerService.IsGuest(_workContext.CurrentCustomer) && !_orderSettings.AnonymousCheckoutAllowed)
                 return Challenge();
 
             var model = _checkoutModelFactory.PrepareOnePageCheckoutModel(cart);
             return View(model);
         }
 
+        [IgnoreAntiforgeryToken]
         public virtual IActionResult OpcSaveBilling(CheckoutBillingAddressModel model, IFormCollection form)
         {
             try
@@ -1152,7 +1170,7 @@ namespace Nop.Web.Controllers
                 if (!_orderSettings.OnePageCheckoutEnabled)
                     throw new Exception("One page checkout is disabled");
 
-                if (_workContext.CurrentCustomer.IsGuest() && !_orderSettings.AnonymousCheckoutAllowed)
+                if (_customerService.IsGuest(_workContext.CurrentCustomer) && !_orderSettings.AnonymousCheckoutAllowed)
                     throw new Exception("Anonymous checkout is not allowed");
 
                 int.TryParse(form["billing_address_id"], out var billingAddressId);
@@ -1160,10 +1178,10 @@ namespace Nop.Web.Controllers
                 if (billingAddressId > 0)
                 {
                     //existing address
-                    var address = _workContext.CurrentCustomer.Addresses.FirstOrDefault(a => a.Id == billingAddressId)
+                    var address = _customerService.GetCustomerAddress(_workContext.CurrentCustomer.Id, billingAddressId)
                         ?? throw new Exception("Address can't be loaded");
 
-                    _workContext.CurrentCustomer.BillingAddress = address;
+                    _workContext.CurrentCustomer.BillingAddressId = address.Id;
                     _customerService.UpdateCustomer(_workContext.CurrentCustomer);
                 }
                 else
@@ -1199,45 +1217,48 @@ namespace Nop.Web.Controllers
                     }
 
                     //try to find an address with the same values (don't duplicate records)
-                    var address = _addressService.FindAddress(_workContext.CurrentCustomer.Addresses.ToList(),
+                    var address = _addressService.FindAddress(_customerService.GetAddressesByCustomerId(_workContext.CurrentCustomer.Id).ToList(),
                         newAddress.FirstName, newAddress.LastName, newAddress.PhoneNumber,
                         newAddress.Email, newAddress.FaxNumber, newAddress.Company,
                         newAddress.Address1, newAddress.Address2, newAddress.City,
                         newAddress.County, newAddress.StateProvinceId, newAddress.ZipPostalCode,
                         newAddress.CountryId, customAttributes);
+
                     if (address == null)
                     {
                         //address is not found. let's create a new one
                         address = newAddress.ToEntity();
                         address.CustomAttributes = customAttributes;
                         address.CreatedOnUtc = DateTime.UtcNow;
+
                         //some validation
                         if (address.CountryId == 0)
                             address.CountryId = null;
+
                         if (address.StateProvinceId == 0)
                             address.StateProvinceId = null;
-                        if (address.CountryId.HasValue && address.CountryId.Value > 0)
-                        {
-                            address.Country = _countryService.GetCountryById(address.CountryId.Value);
-                        }
-                        //_workContext.CurrentCustomer.Addresses.Add(address);
-                        _workContext.CurrentCustomer.CustomerAddressMappings.Add(new CustomerAddressMapping { Address = address });
+
+                        _addressService.InsertAddress(address);
+
+                        _customerService.InsertCustomerAddress(_workContext.CurrentCustomer, address);
                     }
-                    _workContext.CurrentCustomer.BillingAddress = address;
+
+                    _workContext.CurrentCustomer.BillingAddressId = address.Id;
+
                     _customerService.UpdateCustomer(_workContext.CurrentCustomer);
                 }
 
                 if (_shoppingCartService.ShoppingCartRequiresShipping(cart))
                 {
                     //shipping is required
-                    var address = _workContext.CurrentCustomer.BillingAddress;
+                    var address = _customerService.GetCustomerBillingAddress(_workContext.CurrentCustomer);
 
                     //by default Shipping is available if the country is not specified
-                    var shippingAllowed = _addressSettings.CountryEnabled ? address.Country?.AllowsShipping ?? false : true;
+                    var shippingAllowed = _addressSettings.CountryEnabled ? _countryService.GetCountryByAddress(address)?.AllowsShipping ?? false : true;
                     if (_shippingSettings.ShipToSameAddress && model.ShipToSameAddress && shippingAllowed)
                     {
                         //ship to the same address
-                        _workContext.CurrentCustomer.ShippingAddress = address;
+                        _workContext.CurrentCustomer.ShippingAddressId = address.Id;
                         _customerService.UpdateCustomer(_workContext.CurrentCustomer);
                         //reset selected shipping method (in case if "pick up in store" was selected)
                         _genericAttributeService.SaveAttribute<ShippingOption>(_workContext.CurrentCustomer, NopCustomerDefaults.SelectedShippingOptionAttribute, null, _storeContext.CurrentStore.Id);
@@ -1261,7 +1282,7 @@ namespace Nop.Web.Controllers
                 }
 
                 //shipping is not required
-                _workContext.CurrentCustomer.ShippingAddress = null;
+                _workContext.CurrentCustomer.ShippingAddressId = null;
                 _customerService.UpdateCustomer(_workContext.CurrentCustomer);
 
                 _genericAttributeService.SaveAttribute<ShippingOption>(_workContext.CurrentCustomer, NopCustomerDefaults.SelectedShippingOptionAttribute, null, _storeContext.CurrentStore.Id);
@@ -1276,6 +1297,7 @@ namespace Nop.Web.Controllers
             }
         }
 
+        [IgnoreAntiforgeryToken]
         public virtual IActionResult OpcSaveShipping(CheckoutShippingAddressModel model, IFormCollection form)
         {
             try
@@ -1292,7 +1314,7 @@ namespace Nop.Web.Controllers
                 if (!_orderSettings.OnePageCheckoutEnabled)
                     throw new Exception("One page checkout is disabled");
 
-                if (_workContext.CurrentCustomer.IsGuest() && !_orderSettings.AnonymousCheckoutAllowed)
+                if (_customerService.IsGuest(_workContext.CurrentCustomer) && !_orderSettings.AnonymousCheckoutAllowed)
                     throw new Exception("Anonymous checkout is not allowed");
 
                 if (!_shoppingCartService.ShoppingCartRequiresShipping(cart))
@@ -1304,11 +1326,11 @@ namespace Nop.Web.Controllers
                     if (model.PickupInStore)
                     {
                         //no shipping address selected
-                        _workContext.CurrentCustomer.ShippingAddress = null;
+                        _workContext.CurrentCustomer.ShippingAddressId = null;
                         _customerService.UpdateCustomer(_workContext.CurrentCustomer);
 
                         var pickupPoint = form["pickup-points-id"].ToString().Split(new[] { "___" }, StringSplitOptions.None);
-                        var pickupPoints = _shippingService.GetPickupPoints(_workContext.CurrentCustomer.BillingAddress,
+                        var pickupPoints = _shippingService.GetPickupPoints(_workContext.CurrentCustomer.BillingAddressId ?? 0,
                             _workContext.CurrentCustomer, pickupPoint[1], _storeContext.CurrentStore.Id).PickupPoints.ToList();
                         var selectedPoint = pickupPoints.FirstOrDefault(x => x.Id.Equals(pickupPoint[0]));
                         if (selectedPoint == null)
@@ -1337,10 +1359,10 @@ namespace Nop.Web.Controllers
                 if (shippingAddressId > 0)
                 {
                     //existing address
-                    var address = _workContext.CurrentCustomer.Addresses.FirstOrDefault(a => a.Id == shippingAddressId)
+                    var address = _customerService.GetCustomerAddress(_workContext.CurrentCustomer.Id, shippingAddressId)
                         ?? throw new Exception("Address can't be loaded");
 
-                    _workContext.CurrentCustomer.ShippingAddress = address;
+                    _workContext.CurrentCustomer.ShippingAddressId = address.Id;
                     _customerService.UpdateCustomer(_workContext.CurrentCustomer);
                 }
                 else
@@ -1375,35 +1397,26 @@ namespace Nop.Web.Controllers
                     }
 
                     //try to find an address with the same values (don't duplicate records)
-                    var address = _addressService.FindAddress(_workContext.CurrentCustomer.Addresses.ToList(),
+                    var address = _addressService.FindAddress(_customerService.GetAddressesByCustomerId(_workContext.CurrentCustomer.Id).ToList(),
                         newAddress.FirstName, newAddress.LastName, newAddress.PhoneNumber,
                         newAddress.Email, newAddress.FaxNumber, newAddress.Company,
                         newAddress.Address1, newAddress.Address2, newAddress.City,
                         newAddress.County, newAddress.StateProvinceId, newAddress.ZipPostalCode,
                         newAddress.CountryId, customAttributes);
+
                     if (address == null)
                     {
                         address = newAddress.ToEntity();
                         address.CustomAttributes = customAttributes;
                         address.CreatedOnUtc = DateTime.UtcNow;
-                        //little hack here (TODO: find a better solution)
-                        //EF does not load navigation properties for newly created entities (such as this "Address").
-                        //we have to load them manually 
-                        //otherwise, "Country" property of "Address" entity will be null in shipping rate computation methods
-                        if (address.CountryId.HasValue)
-                            address.Country = _countryService.GetCountryById(address.CountryId.Value);
-                        if (address.StateProvinceId.HasValue)
-                            address.StateProvince = _stateProvinceService.GetStateProvinceById(address.StateProvinceId.Value);
 
-                        //other null validations
-                        if (address.CountryId == 0)
-                            address.CountryId = null;
-                        if (address.StateProvinceId == 0)
-                            address.StateProvinceId = null;
-                        //_workContext.CurrentCustomer.Addresses.Add(address);
-                        _workContext.CurrentCustomer.CustomerAddressMappings.Add(new CustomerAddressMapping { Address = address });
+                        _addressService.InsertAddress(address);
+
+                        _customerService.InsertCustomerAddress(_workContext.CurrentCustomer, address);
                     }
-                    _workContext.CurrentCustomer.ShippingAddress = address;
+
+                    _workContext.CurrentCustomer.ShippingAddressId = address.Id;
+
                     _customerService.UpdateCustomer(_workContext.CurrentCustomer);
                 }
 
@@ -1416,6 +1429,7 @@ namespace Nop.Web.Controllers
             }
         }
 
+        [IgnoreAntiforgeryToken]
         public virtual IActionResult OpcSaveShippingMethod(string shippingoption)
         {
             try
@@ -1432,7 +1446,7 @@ namespace Nop.Web.Controllers
                 if (!_orderSettings.OnePageCheckoutEnabled)
                     throw new Exception("One page checkout is disabled");
 
-                if (_workContext.CurrentCustomer.IsGuest() && !_orderSettings.AnonymousCheckoutAllowed)
+                if (_customerService.IsGuest(_workContext.CurrentCustomer) && !_orderSettings.AnonymousCheckoutAllowed)
                     throw new Exception("Anonymous checkout is not allowed");
 
                 if (!_shoppingCartService.ShoppingCartRequiresShipping(cart))
@@ -1454,7 +1468,7 @@ namespace Nop.Web.Controllers
                 if (shippingOptions == null || !shippingOptions.Any())
                 {
                     //not found? let's load them using shipping service
-                    shippingOptions = _shippingService.GetShippingOptions(cart, _workContext.CurrentCustomer.ShippingAddress,
+                    shippingOptions = _shippingService.GetShippingOptions(cart, _customerService.GetCustomerShippingAddress(_workContext.CurrentCustomer),
                         _workContext.CurrentCustomer, shippingRateComputationMethodSystemName, _storeContext.CurrentStore.Id).ShippingOptions.ToList();
                 }
                 else
@@ -1482,6 +1496,7 @@ namespace Nop.Web.Controllers
             }
         }
 
+        [IgnoreAntiforgeryToken]
         public virtual IActionResult OpcSavePaymentMethod(string paymentmethod, CheckoutPaymentMethodModel model)
         {
             try
@@ -1498,7 +1513,7 @@ namespace Nop.Web.Controllers
                 if (!_orderSettings.OnePageCheckoutEnabled)
                     throw new Exception("One page checkout is disabled");
 
-                if (_workContext.CurrentCustomer.IsGuest() && !_orderSettings.AnonymousCheckoutAllowed)
+                if (_customerService.IsGuest(_workContext.CurrentCustomer) && !_orderSettings.AnonymousCheckoutAllowed)
                     throw new Exception("Anonymous checkout is not allowed");
 
                 //payment method 
@@ -1551,6 +1566,7 @@ namespace Nop.Web.Controllers
             }
         }
 
+        [IgnoreAntiforgeryToken]
         public virtual IActionResult OpcSavePaymentInfo(IFormCollection form)
         {
             try
@@ -1567,7 +1583,7 @@ namespace Nop.Web.Controllers
                 if (!_orderSettings.OnePageCheckoutEnabled)
                     throw new Exception("One page checkout is disabled");
 
-                if (_workContext.CurrentCustomer.IsGuest() && !_orderSettings.AnonymousCheckoutAllowed)
+                if (_customerService.IsGuest(_workContext.CurrentCustomer) && !_orderSettings.AnonymousCheckoutAllowed)
                     throw new Exception("Anonymous checkout is not allowed");
 
                 var paymentMethodSystemName = _genericAttributeService.GetAttribute<string>(_workContext.CurrentCustomer,
@@ -1618,6 +1634,7 @@ namespace Nop.Web.Controllers
             }
         }
 
+        [IgnoreAntiforgeryToken]
         public virtual IActionResult OpcConfirmOrder()
         {
             try
@@ -1634,7 +1651,7 @@ namespace Nop.Web.Controllers
                 if (!_orderSettings.OnePageCheckoutEnabled)
                     throw new Exception("One page checkout is disabled");
 
-                if (_workContext.CurrentCustomer.IsGuest() && !_orderSettings.AnonymousCheckoutAllowed)
+                if (_customerService.IsGuest(_workContext.CurrentCustomer) && !_orderSettings.AnonymousCheckoutAllowed)
                     throw new Exception("Anonymous checkout is not allowed");
 
                 //prevent 2 orders being placed within an X seconds time frame
@@ -1721,7 +1738,7 @@ namespace Nop.Web.Controllers
                 if (!_orderSettings.OnePageCheckoutEnabled)
                     return RedirectToRoute("Homepage");
 
-                if (_workContext.CurrentCustomer.IsGuest() && !_orderSettings.AnonymousCheckoutAllowed)
+                if (_customerService.IsGuest(_workContext.CurrentCustomer) && !_orderSettings.AnonymousCheckoutAllowed)
                     return Challenge();
 
                 //get the order
