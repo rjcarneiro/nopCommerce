@@ -14,7 +14,6 @@ using Nop.Services.Messages;
 using Nop.Services.Orders;
 using Nop.Web.Factories;
 using Nop.Web.Framework.Mvc.Filters;
-using Nop.Web.Framework.Security;
 using Nop.Web.Models.Order;
 
 namespace Nop.Web.Controllers
@@ -78,7 +77,7 @@ namespace Nop.Web.Controllers
 
         #region Methods
 
-        [HttpsRequirement(SslRequirement.Yes)]
+        [HttpsRequirement]
         public virtual IActionResult CustomerReturnRequests()
         {
             if (!_customerService.IsRegistered(_workContext.CurrentCustomer))
@@ -88,7 +87,7 @@ namespace Nop.Web.Controllers
             return View(model);
         }
 
-        [HttpsRequirement(SslRequirement.Yes)]
+        [HttpsRequirement]
         public virtual IActionResult ReturnRequest(int orderId)
         {
             var order = _orderService.GetOrderById(orderId);
@@ -161,6 +160,8 @@ namespace Nop.Web.Controllers
                     //set return request custom number
                     rr.CustomNumber = _customNumberFormatter.GenerateReturnRequestCustomNumber(rr);
                     _customerService.UpdateCustomer(_workContext.CurrentCustomer);
+                    _returnRequestService.UpdateReturnRequest(rr);
+
                     //notify store owner
                     _workflowMessageService.SendNewReturnRequestStoreOwnerNotification(rr, orderItem, order, _localizationSettings.DefaultAdminLanguageId);
                     //notify customer

@@ -23,12 +23,11 @@ using Nop.Web.Extensions;
 using Nop.Web.Factories;
 using Nop.Web.Framework.Controllers;
 using Nop.Web.Framework.Mvc.Filters;
-using Nop.Web.Framework.Security;
 using Nop.Web.Models.Checkout;
 
 namespace Nop.Web.Controllers
 {
-    [HttpsRequirement(SslRequirement.Yes)]
+    [HttpsRequirement]
     [AutoValidateAntiforgeryToken]
     public partial class CheckoutController : BasePublicController
     {
@@ -135,35 +134,54 @@ namespace Nop.Web.Controllers
         }
 
         /// <summary>
-        /// Generate an order GUID
+        /// Parses the value indicating whether the "pickup in store" is allowed
         /// </summary>
-        /// <param name="processPaymentRequest">Process payment request</param>
-        protected virtual void GenerateOrderGuid(ProcessPaymentRequest processPaymentRequest)
+        /// <param name="form">The form</param>
+        /// <returns>The value indicating whether the "pickup in store" is allowed</returns>
+        protected virtual bool ParsePickupInStore(IFormCollection form)
         {
-            if (processPaymentRequest == null)
-                return;
+            var pickupInStore = false;
 
-            //we should use the same GUID for multiple payment attempts
-            //this way a payment gateway can prevent security issues such as credit card brute-force attacks
-            //in order to avoid any possible limitations by payment gateway we reset GUID periodically
-            var previousPaymentRequest = HttpContext.Session.Get<ProcessPaymentRequest>("OrderPaymentInfo");
-            if (_paymentSettings.RegenerateOrderGuidInterval > 0 &&
-                previousPaymentRequest != null && 
-                previousPaymentRequest.OrderGuidGeneratedOnUtc.HasValue)
-            {
-                var interval = DateTime.UtcNow - previousPaymentRequest.OrderGuidGeneratedOnUtc.Value;
-                if (interval.TotalSeconds < _paymentSettings.RegenerateOrderGuidInterval)
-                {
-                    processPaymentRequest.OrderGuid = previousPaymentRequest.OrderGuid;
-                    processPaymentRequest.OrderGuidGeneratedOnUtc = previousPaymentRequest.OrderGuidGeneratedOnUtc;
-                }
-            }
+            var pickupInStoreParameter = form["PickupInStore"].FirstOrDefault();
+            if (!string.IsNullOrWhiteSpace(pickupInStoreParameter))
+                bool.TryParse(pickupInStoreParameter, out pickupInStore);
 
-            if (processPaymentRequest.OrderGuid == Guid.Empty)
+            return pickupInStore;
+        }
+
+        /// <summary>
+        /// Parses the pickup option
+        /// </summary>
+        /// <param name="form">The form</param>
+        /// <returns>The pickup option</returns>
+        protected virtual PickupPoint ParsePickupOption(IFormCollection form)
+        {
+            var pickupPoint = form["pickup-points-id"].ToString().Split(new[] { "___" }, StringSplitOptions.None);
+            var pickupPoints = _shippingService.GetPickupPoints(_workContext.CurrentCustomer.BillingAddressId ?? 0,
+                _workContext.CurrentCustomer, pickupPoint[1], _storeContext.CurrentStore.Id).PickupPoints.ToList();
+            var selectedPoint = pickupPoints.FirstOrDefault(x => x.Id.Equals(pickupPoint[0]));
+            if (selectedPoint == null)
+                throw new Exception("Pickup point is not allowed");
+
+            return selectedPoint;
+        }
+
+        /// <summary>
+        /// Saves the pickup option
+        /// </summary>
+        /// <param name="pickupPoint">The pickup option</param>
+        protected virtual void SavePickupOption(PickupPoint pickupPoint)
+        {
+            var pickUpInStoreShippingOption = new ShippingOption
             {
-                processPaymentRequest.OrderGuid = Guid.NewGuid();
-                processPaymentRequest.OrderGuidGeneratedOnUtc = DateTime.UtcNow;
-            }
+                Name = string.Format(_localizationService.GetResource("Checkout.PickupPoints.Name"), pickupPoint.Name),
+                Rate = pickupPoint.PickupFee,
+                Description = pickupPoint.Description,
+                ShippingRateComputationMethodSystemName = pickupPoint.ProviderSystemName,
+                IsPickupInStore = true
+            };
+            _genericAttributeService.SaveAttribute(_workContext.CurrentCustomer, NopCustomerDefaults.SelectedShippingOptionAttribute, pickUpInStoreShippingOption, _storeContext.CurrentStore.Id);
+            _genericAttributeService.SaveAttribute(_workContext.CurrentCustomer, NopCustomerDefaults.SelectedPickupPointAttribute, pickupPoint, _storeContext.CurrentStore.Id);
         }
 
         #endregion
@@ -400,7 +418,7 @@ namespace Nop.Web.Controllers
                         address.CountryId = null;
                     if (address.StateProvinceId == 0)
                         address.StateProvinceId = null;
-                    
+
                     _addressService.InsertAddress(address);
 
                     _customerService.InsertCustomerAddress(_workContext.CurrentCustomer, address);
@@ -452,14 +470,10 @@ namespace Nop.Web.Controllers
                 return Challenge();
 
             if (!_shoppingCartService.ShoppingCartRequiresShipping(cart))
-            {
-                _workContext.CurrentCustomer.ShippingAddressId = null;
-                _customerService.UpdateCustomer(_workContext.CurrentCustomer);
-                return RedirectToRoute("CheckoutShippingMethod");
-            }
+                return RedirectToRoute("CheckoutShippingMethod");        
 
             //model
-            var model = _checkoutModelFactory.PrepareShippingAddressModel(prePopulateNewAddressWithCustomerFields: true);
+            var model = _checkoutModelFactory.PrepareShippingAddressModel(cart, prePopulateNewAddressWithCustomerFields: true);
             return View(model);
         }
 
@@ -506,39 +520,17 @@ namespace Nop.Web.Controllers
                 return Challenge();
 
             if (!_shoppingCartService.ShoppingCartRequiresShipping(cart))
-            {
-                _workContext.CurrentCustomer.ShippingAddressId = null;
-                _customerService.UpdateCustomer(_workContext.CurrentCustomer);
                 return RedirectToRoute("CheckoutShippingMethod");
-            }
-
+            
             //pickup point
-            if (_shippingSettings.AllowPickupInStore)
+            if (_shippingSettings.AllowPickupInStore && !_orderSettings.DisplayPickupInStoreOnShippingMethodPage)
             {
-                if (model.PickupInStore)
+                var pickupInStore = ParsePickupInStore(form);
+                if (pickupInStore)
                 {
-                    //no shipping address selected
-                    _workContext.CurrentCustomer.ShippingAddressId = null;
-                    _customerService.UpdateCustomer(_workContext.CurrentCustomer);
-
-                    var pickupPoint = form["pickup-points-id"].ToString().Split(new[] { "___" }, StringSplitOptions.None);
-                    var pickupPoints = _shippingService.GetPickupPoints(_workContext.CurrentCustomer.BillingAddressId ?? 0,
-                        _workContext.CurrentCustomer, pickupPoint[1], _storeContext.CurrentStore.Id).PickupPoints.ToList();
-                    var selectedPoint = pickupPoints.FirstOrDefault(x => x.Id.Equals(pickupPoint[0]));
-                    if (selectedPoint == null)
-                        return RedirectToRoute("CheckoutShippingAddress");
-
-                    var pickUpInStoreShippingOption = new ShippingOption
-                    {
-                        Name = string.Format(_localizationService.GetResource("Checkout.PickupPoints.Name"), selectedPoint.Name),
-                        Rate = selectedPoint.PickupFee,
-                        Description = selectedPoint.Description,
-                        ShippingRateComputationMethodSystemName = selectedPoint.ProviderSystemName
-                    };
-
-                    _genericAttributeService.SaveAttribute(_workContext.CurrentCustomer, NopCustomerDefaults.SelectedShippingOptionAttribute, pickUpInStoreShippingOption, _storeContext.CurrentStore.Id);
-                    _genericAttributeService.SaveAttribute(_workContext.CurrentCustomer, NopCustomerDefaults.SelectedPickupPointAttribute, selectedPoint, _storeContext.CurrentStore.Id);
-
+                    var pickupOption = ParsePickupOption(form);
+                    SavePickupOption(pickupOption);
+                    
                     return RedirectToRoute("CheckoutPaymentMethod");
                 }
 
@@ -590,7 +582,7 @@ namespace Nop.Web.Controllers
             }
 
             //If we got this far, something failed, redisplay form
-            model = _checkoutModelFactory.PrepareShippingAddressModel(
+            model = _checkoutModelFactory.PrepareShippingAddressModel(cart,
                 selectedCountryId: newAddress.CountryId,
                 overrideAttributesXml: customAttributes);
             return View(model);
@@ -619,6 +611,15 @@ namespace Nop.Web.Controllers
                 return RedirectToRoute("CheckoutPaymentMethod");
             }
 
+            //check if pickup point is selected on the shipping address step
+            if (!_orderSettings.DisplayPickupInStoreOnShippingMethodPage)
+            {
+                var selectedPickUpPoint = _genericAttributeService
+                    .GetAttribute<PickupPoint>(_workContext.CurrentCustomer, NopCustomerDefaults.SelectedPickupPointAttribute, _storeContext.CurrentStore.Id);
+                if (selectedPickUpPoint != null)
+                    return RedirectToRoute("CheckoutPaymentMethod");
+            }
+
             //model
             var model = _checkoutModelFactory.PrepareShippingMethodModel(cart, _customerService.GetCustomerShippingAddress(_workContext.CurrentCustomer));
 
@@ -639,7 +640,7 @@ namespace Nop.Web.Controllers
 
         [HttpPost, ActionName("ShippingMethod")]
         [FormValueRequired("nextstep")]
-        public virtual IActionResult SelectShippingMethod(string shippingoption)
+        public virtual IActionResult SelectShippingMethod(string shippingoption, IFormCollection form)
         {
             //validation
             if (_orderSettings.CheckoutDisabled)
@@ -661,6 +662,22 @@ namespace Nop.Web.Controllers
                 _genericAttributeService.SaveAttribute<ShippingOption>(_workContext.CurrentCustomer,
                     NopCustomerDefaults.SelectedShippingOptionAttribute, null, _storeContext.CurrentStore.Id);
                 return RedirectToRoute("CheckoutPaymentMethod");
+            }
+
+            //pickup point
+            if (_shippingSettings.AllowPickupInStore && _orderSettings.DisplayPickupInStoreOnShippingMethodPage)
+            {
+                var pickupInStore = ParsePickupInStore(form);
+                if (pickupInStore)
+                {
+                    var pickupOption = ParsePickupOption(form);
+                    SavePickupOption(pickupOption);
+
+                    return RedirectToRoute("CheckoutPaymentMethod");
+                }
+
+                //set value indicating that "pick up in store" option has not been chosen
+                _genericAttributeService.SaveAttribute<PickupPoint>(_workContext.CurrentCustomer, NopCustomerDefaults.SelectedPickupPointAttribute, null, _storeContext.CurrentStore.Id);
             }
 
             //parse selected method 
@@ -829,7 +846,8 @@ namespace Nop.Web.Controllers
             //load payment method
             var paymentMethodSystemName = _genericAttributeService.GetAttribute<string>(_workContext.CurrentCustomer,
                 NopCustomerDefaults.SelectedPaymentMethodAttribute, _storeContext.CurrentStore.Id);
-            var paymentMethod = _paymentPluginManager.LoadPluginBySystemName(paymentMethodSystemName);
+            var paymentMethod = _paymentPluginManager
+                .LoadPluginBySystemName(paymentMethodSystemName, _workContext.CurrentCustomer, _storeContext.CurrentStore.Id);
             if (paymentMethod == null)
                 return RedirectToRoute("CheckoutPaymentMethod");
 
@@ -880,7 +898,8 @@ namespace Nop.Web.Controllers
             //load payment method
             var paymentMethodSystemName = _genericAttributeService.GetAttribute<string>(_workContext.CurrentCustomer,
                 NopCustomerDefaults.SelectedPaymentMethodAttribute, _storeContext.CurrentStore.Id);
-            var paymentMethod = _paymentPluginManager.LoadPluginBySystemName(paymentMethodSystemName);
+            var paymentMethod = _paymentPluginManager
+                .LoadPluginBySystemName(paymentMethodSystemName, _workContext.CurrentCustomer, _storeContext.CurrentStore.Id);
             if (paymentMethod == null)
                 return RedirectToRoute("CheckoutPaymentMethod");
 
@@ -892,7 +911,7 @@ namespace Nop.Web.Controllers
                 //get payment info
                 var paymentInfo = paymentMethod.GetPaymentInfo(form);
                 //set previous order GUID (if exists)
-                GenerateOrderGuid(paymentInfo);
+                _paymentService.GenerateOrderGuid(paymentInfo);
 
                 //session save
                 HttpContext.Session.Set("OrderPaymentInfo", paymentInfo);
@@ -963,7 +982,7 @@ namespace Nop.Web.Controllers
 
                     processPaymentRequest = new ProcessPaymentRequest();
                 }
-                GenerateOrderGuid(processPaymentRequest);
+                _paymentService.GenerateOrderGuid(processPaymentRequest);
                 processPaymentRequest.StoreId = _storeContext.CurrentStore.Id;
                 processPaymentRequest.CustomerId = _workContext.CurrentCustomer.Id;
                 processPaymentRequest.PaymentMethodSystemName = _genericAttributeService.GetAttribute<string>(_workContext.CurrentCustomer,
@@ -1179,7 +1198,7 @@ namespace Nop.Web.Controllers
                 {
                     //existing address
                     var address = _customerService.GetCustomerAddress(_workContext.CurrentCustomer.Id, billingAddressId)
-                        ?? throw new Exception("Address can't be loaded");
+                        ?? throw new Exception(_localizationService.GetResource("Checkout.Address.NotFound"));
 
                     _workContext.CurrentCustomer.BillingAddressId = address.Id;
                     _customerService.UpdateCustomer(_workContext.CurrentCustomer);
@@ -1268,7 +1287,7 @@ namespace Nop.Web.Controllers
                     }
 
                     //do not ship to the same address
-                    var shippingAddressModel = _checkoutModelFactory.PrepareShippingAddressModel(prePopulateNewAddressWithCustomerFields: true);
+                    var shippingAddressModel = _checkoutModelFactory.PrepareShippingAddressModel(cart, prePopulateNewAddressWithCustomerFields: true);
 
                     return Json(new
                     {
@@ -1282,9 +1301,6 @@ namespace Nop.Web.Controllers
                 }
 
                 //shipping is not required
-                _workContext.CurrentCustomer.ShippingAddressId = null;
-                _customerService.UpdateCustomer(_workContext.CurrentCustomer);
-
                 _genericAttributeService.SaveAttribute<ShippingOption>(_workContext.CurrentCustomer, NopCustomerDefaults.SelectedShippingOptionAttribute, null, _storeContext.CurrentStore.Id);
 
                 //load next step
@@ -1321,32 +1337,14 @@ namespace Nop.Web.Controllers
                     throw new Exception("Shipping is not required");
 
                 //pickup point
-                if (_shippingSettings.AllowPickupInStore)
+                if (_shippingSettings.AllowPickupInStore && !_orderSettings.DisplayPickupInStoreOnShippingMethodPage)
                 {
-                    if (model.PickupInStore)
+                    var pickupInStore = ParsePickupInStore(form);
+                    if (pickupInStore)
                     {
-                        //no shipping address selected
-                        _workContext.CurrentCustomer.ShippingAddressId = null;
-                        _customerService.UpdateCustomer(_workContext.CurrentCustomer);
+                        var pickupOption = ParsePickupOption(form);
+                        SavePickupOption(pickupOption);
 
-                        var pickupPoint = form["pickup-points-id"].ToString().Split(new[] { "___" }, StringSplitOptions.None);
-                        var pickupPoints = _shippingService.GetPickupPoints(_workContext.CurrentCustomer.BillingAddressId ?? 0,
-                            _workContext.CurrentCustomer, pickupPoint[1], _storeContext.CurrentStore.Id).PickupPoints.ToList();
-                        var selectedPoint = pickupPoints.FirstOrDefault(x => x.Id.Equals(pickupPoint[0]));
-                        if (selectedPoint == null)
-                            throw new Exception("Pickup point is not allowed");
-
-                        var pickUpInStoreShippingOption = new ShippingOption
-                        {
-                            Name = string.Format(_localizationService.GetResource("Checkout.PickupPoints.Name"), selectedPoint.Name),
-                            Rate = selectedPoint.PickupFee,
-                            Description = selectedPoint.Description,
-                            ShippingRateComputationMethodSystemName = selectedPoint.ProviderSystemName
-                        };
-                        _genericAttributeService.SaveAttribute(_workContext.CurrentCustomer, NopCustomerDefaults.SelectedShippingOptionAttribute, pickUpInStoreShippingOption, _storeContext.CurrentStore.Id);
-                        _genericAttributeService.SaveAttribute(_workContext.CurrentCustomer, NopCustomerDefaults.SelectedPickupPointAttribute, selectedPoint, _storeContext.CurrentStore.Id);
-
-                        //load next step
                         return OpcLoadStepAfterShippingMethod(cart);
                     }
 
@@ -1360,7 +1358,7 @@ namespace Nop.Web.Controllers
                 {
                     //existing address
                     var address = _customerService.GetCustomerAddress(_workContext.CurrentCustomer.Id, shippingAddressId)
-                        ?? throw new Exception("Address can't be loaded");
+                        ?? throw new Exception(_localizationService.GetResource("Checkout.Address.NotFound"));
 
                     _workContext.CurrentCustomer.ShippingAddressId = address.Id;
                     _customerService.UpdateCustomer(_workContext.CurrentCustomer);
@@ -1382,7 +1380,7 @@ namespace Nop.Web.Controllers
                     if (!ModelState.IsValid)
                     {
                         //model is not valid. redisplay the form with errors
-                        var shippingAddressModel = _checkoutModelFactory.PrepareShippingAddressModel(
+                        var shippingAddressModel = _checkoutModelFactory.PrepareShippingAddressModel(cart,
                             selectedCountryId: newAddress.CountryId,
                             overrideAttributesXml: customAttributes);
                         shippingAddressModel.NewAddressPreselected = true;
@@ -1430,7 +1428,7 @@ namespace Nop.Web.Controllers
         }
 
         [IgnoreAntiforgeryToken]
-        public virtual IActionResult OpcSaveShippingMethod(string shippingoption)
+        public virtual IActionResult OpcSaveShippingMethod(string shippingoption, IFormCollection form)
         {
             try
             {
@@ -1451,6 +1449,22 @@ namespace Nop.Web.Controllers
 
                 if (!_shoppingCartService.ShoppingCartRequiresShipping(cart))
                     throw new Exception("Shipping is not required");
+
+                //pickup point
+                if (_shippingSettings.AllowPickupInStore && _orderSettings.DisplayPickupInStoreOnShippingMethodPage)
+                {
+                    var pickupInStore = ParsePickupInStore(form);
+                    if (pickupInStore)
+                    {
+                        var pickupOption = ParsePickupOption(form);
+                        SavePickupOption(pickupOption);
+
+                        return OpcLoadStepAfterShippingMethod(cart);
+                    }
+
+                    //set value indicating that "pick up in store" option has not been chosen
+                    _genericAttributeService.SaveAttribute<PickupPoint>(_workContext.CurrentCustomer, NopCustomerDefaults.SelectedPickupPointAttribute, null, _storeContext.CurrentStore.Id);
+                }
 
                 //parse selected method 
                 if (string.IsNullOrEmpty(shippingoption))
@@ -1588,7 +1602,8 @@ namespace Nop.Web.Controllers
 
                 var paymentMethodSystemName = _genericAttributeService.GetAttribute<string>(_workContext.CurrentCustomer,
                     NopCustomerDefaults.SelectedPaymentMethodAttribute, _storeContext.CurrentStore.Id);
-                var paymentMethod = _paymentPluginManager.LoadPluginBySystemName(paymentMethodSystemName)
+                var paymentMethod = _paymentPluginManager
+                    .LoadPluginBySystemName(paymentMethodSystemName, _workContext.CurrentCustomer, _storeContext.CurrentStore.Id)
                     ?? throw new Exception("Payment method is not selected");
 
                 var warnings = paymentMethod.ValidatePaymentForm(form);
@@ -1599,7 +1614,7 @@ namespace Nop.Web.Controllers
                     //get payment info
                     var paymentInfo = paymentMethod.GetPaymentInfo(form);
                     //set previous order GUID (if exists)
-                    GenerateOrderGuid(paymentInfo);
+                    _paymentService.GenerateOrderGuid(paymentInfo);
 
                     //session save
                     HttpContext.Session.Set("OrderPaymentInfo", paymentInfo);
@@ -1670,7 +1685,7 @@ namespace Nop.Web.Controllers
 
                     processPaymentRequest = new ProcessPaymentRequest();
                 }
-                GenerateOrderGuid(processPaymentRequest);
+                _paymentService.GenerateOrderGuid(processPaymentRequest);
                 processPaymentRequest.StoreId = _storeContext.CurrentStore.Id;
                 processPaymentRequest.CustomerId = _workContext.CurrentCustomer.Id;
                 processPaymentRequest.PaymentMethodSystemName = _genericAttributeService.GetAttribute<string>(_workContext.CurrentCustomer,
@@ -1685,7 +1700,8 @@ namespace Nop.Web.Controllers
                         Order = placeOrderResult.PlacedOrder
                     };
 
-                    var paymentMethod = _paymentPluginManager.LoadPluginBySystemName(placeOrderResult.PlacedOrder.PaymentMethodSystemName);
+                    var paymentMethod = _paymentPluginManager
+                        .LoadPluginBySystemName(placeOrderResult.PlacedOrder.PaymentMethodSystemName, _workContext.CurrentCustomer, _storeContext.CurrentStore.Id);
                     if (paymentMethod == null)
                         //payment method could be null if order total is 0
                         //success
@@ -1748,7 +1764,8 @@ namespace Nop.Web.Controllers
                 if (order == null)
                     return RedirectToRoute("Homepage");
 
-                var paymentMethod = _paymentPluginManager.LoadPluginBySystemName(order.PaymentMethodSystemName);
+                var paymentMethod = _paymentPluginManager
+                    .LoadPluginBySystemName(order.PaymentMethodSystemName, _workContext.CurrentCustomer, _storeContext.CurrentStore.Id);
                 if (paymentMethod == null)
                     return RedirectToRoute("Homepage");
                 if (paymentMethod.PaymentMethodType != PaymentMethodType.Redirection)

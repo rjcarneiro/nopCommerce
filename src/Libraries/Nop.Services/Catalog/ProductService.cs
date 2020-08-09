@@ -14,7 +14,7 @@ using Nop.Core.Domain.Shipping;
 using Nop.Core.Domain.Stores;
 using Nop.Core.Infrastructure;
 using Nop.Data;
-using Nop.Services.Caching.CachingDefaults;
+using Nop.Services.Caching;
 using Nop.Services.Caching.Extensions;
 using Nop.Services.Customers;
 using Nop.Services.Events;
@@ -36,8 +36,9 @@ namespace Nop.Services.Catalog
         protected readonly CatalogSettings _catalogSettings;
         protected readonly CommonSettings _commonSettings;
         protected readonly IAclService _aclService;
+        protected readonly ICacheKeyService _cacheKeyService;
         protected readonly ICustomerService _customerService;
-        protected readonly IDataProvider _dataProvider;
+        protected readonly INopDataProvider _dataProvider;
         protected readonly IDateRangeService _dateRangeService;
         protected readonly IEventPublisher _eventPublisher;
         protected readonly ILanguageService _languageService;
@@ -61,7 +62,7 @@ namespace Nop.Services.Catalog
         protected readonly IRepository<StoreMapping> _storeMappingRepository;
         protected readonly IRepository<TierPrice> _tierPriceRepository;
         protected readonly IRepository<Warehouse> _warehouseRepository;
-        protected readonly IStaticCacheManager _cacheManager;
+        protected readonly IStaticCacheManager _staticCacheManager;
         protected readonly IStoreMappingService _storeMappingService;
         protected readonly IStoreService _storeService;
         protected readonly IWorkContext _workContext;
@@ -74,8 +75,9 @@ namespace Nop.Services.Catalog
         public ProductService(CatalogSettings catalogSettings,
             CommonSettings commonSettings,
             IAclService aclService,
+            ICacheKeyService cacheKeyService,
             ICustomerService customerService,
-            IDataProvider dataProvider,
+            INopDataProvider dataProvider,
             IDateRangeService dateRangeService,
             IEventPublisher eventPublisher,
             ILanguageService languageService,
@@ -99,7 +101,7 @@ namespace Nop.Services.Catalog
             IRepository<StoreMapping> storeMappingRepository,
             IRepository<TierPrice> tierPriceRepository,
             IRepository<Warehouse> warehouseRepositor,
-            IStaticCacheManager cacheManager,
+            IStaticCacheManager staticCacheManager,
             IStoreService storeService,
             IStoreMappingService storeMappingService,
             IWorkContext workContext,
@@ -108,6 +110,7 @@ namespace Nop.Services.Catalog
             _catalogSettings = catalogSettings;
             _commonSettings = commonSettings;
             _aclService = aclService;
+            _cacheKeyService = cacheKeyService;
             _customerService = customerService;
             _dataProvider = dataProvider;
             _dateRangeService = dateRangeService;
@@ -133,7 +136,7 @@ namespace Nop.Services.Catalog
             _storeMappingRepository = storeMappingRepository;
             _tierPriceRepository = tierPriceRepository;
             _warehouseRepository = warehouseRepositor;
-            _cacheManager = cacheManager;
+            _staticCacheManager = staticCacheManager;
             _storeMappingService = storeMappingService;
             _storeService = storeService;
             _workContext = workContext;
@@ -357,7 +360,7 @@ namespace Nop.Services.Catalog
                         p.ShowOnHomepage
                         select p;
 
-            var products = query.ToCachedList(NopCatalogCachingDefaults.ProductsAllDisplayedOnHomepageCacheKey);
+            var products = query.ToCachedList(_cacheKeyService.PrepareKeyForDefaultCache(NopCatalogDefaults.ProductsAllDisplayedOnHomepageCacheKey));
 
             return products;
         }
@@ -385,7 +388,7 @@ namespace Nop.Services.Catalog
             if (productIds == null || productIds.Length == 0)
                 return new List<Product>();
 
-            var key = NopCatalogCachingDefaults.ProductsByIdsCacheKey.ToCacheKey(productIds);
+            var key = _cacheKeyService.PrepareKeyForDefaultCache(NopCatalogDefaults.ProductsByIdsCacheKey, productIds);
 
             var query = from p in _productRepository.Table
                         where productIds.Contains(p.Id) && !p.Deleted
@@ -416,7 +419,7 @@ namespace Nop.Services.Catalog
 
             //insert
             _productRepository.Insert(product);
-            
+
             //event notification
             _eventPublisher.EntityInserted(product);
         }
@@ -432,7 +435,7 @@ namespace Nop.Services.Catalog
 
             //update
             _productRepository.Update(product);
-            
+
             //event notification
             _eventPublisher.EntityUpdated(product);
         }
@@ -448,7 +451,7 @@ namespace Nop.Services.Catalog
 
             //update
             _productRepository.Update(products);
-            
+
             //event notification
             foreach (var product in products)
             {
@@ -509,11 +512,11 @@ namespace Nop.Services.Catalog
                         select p;
             }
 
-            var cacheKey = NopCatalogCachingDefaults.CategoryNumberOfProductsCacheKey
-                .ToCacheKey(allowedCustomerRolesIds, storeId, categoryIds);
+            var cacheKey = _cacheKeyService.PrepareKeyForDefaultCache(NopCatalogDefaults.CategoryNumberOfProductsCacheKey,
+                allowedCustomerRolesIds, storeId, categoryIds);
 
             //only distinct products
-            var result = _cacheManager.Get(cacheKey, () => query.Select(p => p.Id).Distinct().Count());
+            var result = _staticCacheManager.Get(cacheKey, () => query.Select(p => p.Id).Distinct().Count());
 
             return result;
         }
@@ -774,6 +777,7 @@ namespace Nop.Services.Catalog
             }
             //return products
             var totalRecords = pTotalRecords.Value != DBNull.Value ? Convert.ToInt32(pTotalRecords.Value) : 0;
+
             return new PagedList<Product>(products, pageIndex, pageSize, totalRecords);
         }
 
@@ -795,11 +799,7 @@ namespace Nop.Services.Catalog
                 orderby p.Name
                 select p;
 
-            var key = NopCatalogCachingDefaults.ProductsByProductAtributeCacheKey.ToCacheKey(productAttributeId);
-
-            var products = query.ToCachedPagedList(key, pageIndex, pageSize);
-
-            return products;
+            return new PagedList<Product>(query, pageIndex, pageSize);
         }
 
         /// <summary>
@@ -943,7 +943,7 @@ namespace Nop.Services.Catalog
                 join p in _productRepository.Table on pac.ProductId equals p.Id
                 where
                     //filter by combinations with stock quantity less than the minimum
-                    pac.StockQuantity <= 0 &&
+                    pac.StockQuantity < pac.NotifyAdminForQuantityBelow &&
                     //filter by products with tracking inventory by attributes
                     p.ManageInventoryMethodId == (int)ManageInventoryMethod.ManageStockByAttributes &&
                     //ignore deleted products
@@ -1077,6 +1077,8 @@ namespace Nop.Services.Catalog
         {
             if (product == null)
                 throw new ArgumentNullException(nameof(product));
+
+            dateTime ??= DateTime.UtcNow;
 
             if (product.AvailableStartDateTimeUtc.HasValue && product.AvailableStartDateTimeUtc.Value > dateTime)
                 return false;
@@ -1500,19 +1502,6 @@ namespace Nop.Services.Catalog
                     AdjustInventory(associatedProduct, quantityToChange * attributeValue.Quantity, message);
                 }
             }
-
-            //TODO send back in stock notifications?
-            //also do not forget to uncomment some code above ("prevStockQuantity")
-            //if (product.ManageInventoryMethod == ManageInventoryMethod.ManageStock &&
-            //    product.BackorderMode == BackorderMode.NoBackorders &&
-            //    product.AllowBackInStockSubscriptions &&
-            //    product.GetTotalStockQuantity() > 0 &&
-            //    prevStockQuantity <= 0 &&
-            //    product.Published &&
-            //    !product.Deleted)
-            //{
-            //    //_backInStockSubscriptionService.SendNotificationsToSubscribers(product);
-            //}
         }
 
         /// <summary>
@@ -1540,7 +1529,7 @@ namespace Nop.Services.Catalog
             // 1st pass: Applying reserved
             foreach (var item in productInventory)
             {
-                var selectQty = Math.Min(item.StockQuantity - item.ReservedQuantity, qty);
+                var selectQty = Math.Min(Math.Max(0, item.StockQuantity - item.ReservedQuantity), qty);
                 item.ReservedQuantity += selectQty;
                 qty -= selectQty;
 
@@ -1555,58 +1544,7 @@ namespace Nop.Services.Catalog
                 pwi.ReservedQuantity += qty;
             }
 
-            UpdateProduct(product);
-        }
-
-        /// <summary>
-        /// Balance the given quantity in the warehouses.
-        /// </summary>
-        /// <param name="product">Product</param>
-        /// <param name="warehouseId">Warehouse identifier</param>
-        /// <param name="quantity">Quantity</param>
-        public virtual void BalanceInventory(Product product, int warehouseId, int quantity)
-        {
-            if (product == null)
-                throw new ArgumentNullException(nameof(product));
-
-            //Warehouse to which reserve is being transferred
-            var productInventory = _productWarehouseInventoryRepository.Table
-                .Where(pwi => pwi.ProductId == product.Id && pwi.WarehouseId == warehouseId)
-                .ToList()
-                .FirstOrDefault();
-
-            if (productInventory == null)
-                return;
-
-            var selectQty = Math.Min(productInventory.StockQuantity - productInventory.ReservedQuantity, quantity);
-            productInventory.ReservedQuantity += selectQty;
-
-            //remove from reserve in other warehouses what has just been reserved in the current warehouse to equalize the total
-            var productAnotherInventories = _productWarehouseInventoryRepository.Table
-                .Where(pwi => pwi.ProductId == product.Id && pwi.WarehouseId != warehouseId)
-                .OrderByDescending(ob => ob.ReservedQuantity)
-                .ToList();
-
-            var qty = selectQty;
-            //We need to make a balance in all warehouses, as resources of one warehouse may not be enough
-            foreach (var productAnotherInventory in productAnotherInventories)
-            {
-                if (qty > 0)
-                {
-                    if (productAnotherInventory.ReservedQuantity >= qty)
-                    {
-                        productAnotherInventory.ReservedQuantity -= qty;
-                    }
-                    else
-                    {
-                        //Here we can transfer only a part of the reserve, the rest will be sought in other warehouses.
-                        qty = selectQty - productAnotherInventory.ReservedQuantity;
-                        productAnotherInventory.ReservedQuantity = 0;
-                    }
-                }
-            }
-
-            UpdateProduct(product);
+            UpdateProductWarehouseInventory(productInventory);
         }
 
         /// <summary>
@@ -1681,8 +1619,6 @@ namespace Nop.Services.Catalog
 
             //quantity change history
             AddStockQuantityHistoryEntry(product, quantity, pwi.StockQuantity, warehouseId, message);
-
-            //TODO add support for bundled products (AttributesXml)
         }
 
         /// <summary>
@@ -1707,7 +1643,7 @@ namespace Nop.Services.Catalog
             var pwi = _productWarehouseInventoryRepository.Table.FirstOrDefault(wi => wi.ProductId == product.Id && wi.WarehouseId == shipmentItem.WarehouseId);
             if (pwi == null)
                 return 0;
-            
+
             var shipment = _shipmentRepository.ToCachedGetById(shipmentItem.ShipmentId);
 
             //not shipped yet? hence "BookReservedInventory" method was not invoked
@@ -1723,8 +1659,6 @@ namespace Nop.Services.Catalog
 
             //quantity change history
             AddStockQuantityHistoryEntry(product, qty, pwi.StockQuantity, shipmentItem.WarehouseId, message);
-
-            //TODO add support for bundled products (AttributesXml)
 
             return qty;
         }
@@ -1764,7 +1698,7 @@ namespace Nop.Services.Catalog
                         orderby rp.DisplayOrder, rp.Id
                         select rp;
 
-            var relatedProducts = query.ToCachedList(NopCatalogCachingDefaults.ProductsRelatedKey.ToCacheKey(productId, showHidden));
+            var relatedProducts = query.ToCachedList(_cacheKeyService.PrepareKeyForDefaultCache(NopCatalogDefaults.ProductsRelatedCacheKey, productId, showHidden));
 
             return relatedProducts;
         }
@@ -2006,22 +1940,13 @@ namespace Nop.Services.Catalog
                 return null;
 
             //get actual tier prices
-            var actualTierPrices = GetTierPricesByProduct(product.Id).OrderBy(price => price.Quantity)
+            return GetTierPricesByProduct(product.Id)
+                .OrderBy(price => price.Quantity)
                 .FilterByStore(storeId)
+                .FilterByCustomerRole(_catalogSettings.IgnoreAcl ? Array.Empty<int>() : _customerService.GetCustomerRoleIds(customer))
                 .FilterByDate()
-                .RemoveDuplicatedQuantities();
-
-            if (!_catalogSettings.IgnoreAcl)
-            {
-                var customerRoleIds = _customerService.GetCustomerRoleIds(customer);
-
-                actualTierPrices = actualTierPrices.Where(tierPrice =>
-                   !tierPrice.CustomerRoleId.HasValue ||
-                   tierPrice.CustomerRoleId.Value == 0 ||
-                   customerRoleIds.Contains(tierPrice.CustomerRoleId.Value));
-            }
-
-            return actualTierPrices.ToList();
+                .RemoveDuplicatedQuantities()
+                .ToList();
         }
 
         /// <summary>
@@ -2031,7 +1956,7 @@ namespace Nop.Services.Catalog
         public virtual IList<TierPrice> GetTierPricesByProduct(int productId)
         {
             return _tierPriceRepository.Table.Where(tp => tp.ProductId == productId)
-                .ToCachedList(NopCatalogCachingDefaults.ProductTierPrices.ToCacheKey(productId));
+                .ToCachedList(_cacheKeyService.PrepareKeyForDefaultCache(NopCatalogDefaults.ProductTierPricesCacheKey, productId));
         }
 
         /// <summary>
@@ -2044,7 +1969,7 @@ namespace Nop.Services.Catalog
                 throw new ArgumentNullException(nameof(tierPrice));
 
             _tierPriceRepository.Delete(tierPrice);
-            
+
             //event notification
             _eventPublisher.EntityDeleted(tierPrice);
         }
@@ -2072,7 +1997,7 @@ namespace Nop.Services.Catalog
                 throw new ArgumentNullException(nameof(tierPrice));
 
             _tierPriceRepository.Insert(tierPrice);
-            
+
             //event notification
             _eventPublisher.EntityInserted(tierPrice);
         }
@@ -2087,7 +2012,7 @@ namespace Nop.Services.Catalog
                 throw new ArgumentNullException(nameof(tierPrice));
 
             _tierPriceRepository.Update(tierPrice);
-            
+
             //event notification
             _eventPublisher.EntityUpdated(tierPrice);
         }
@@ -2273,7 +2198,7 @@ namespace Nop.Services.Catalog
                 query = query.Where(pr => pr.StoreId == storeId);
             if (productId > 0)
                 query = query.Where(pr => pr.ProductId == productId);
-            
+
             query = from productReview in query
                 join product in _productRepository.Table on productReview.ProductId equals product.Id
                 where
@@ -2469,7 +2394,7 @@ namespace Nop.Services.Catalog
 
             //update
             _productReviewRepository.Update(productReview);
-            
+
             //event notification
             _eventPublisher.EntityUpdated(productReview);
         }
@@ -2541,7 +2466,7 @@ namespace Nop.Services.Catalog
                 throw new ArgumentNullException(nameof(pwi));
 
             _productWarehouseInventoryRepository.Delete(pwi);
-            
+
             _eventPublisher.EntityDeleted(pwi);
         }
 
@@ -2556,6 +2481,7 @@ namespace Nop.Services.Catalog
 
             _productWarehouseInventoryRepository.Insert(pwi);
 
+            //event notification
             _eventPublisher.EntityInserted(pwi);
         }
 
@@ -2569,7 +2495,8 @@ namespace Nop.Services.Catalog
                 throw new ArgumentNullException(nameof(pwi));
 
             _productWarehouseInventoryRepository.Update(pwi);
-            
+
+            //event notification
             _eventPublisher.EntityUpdated(pwi);
         }
 
@@ -2586,7 +2513,8 @@ namespace Nop.Services.Catalog
                 return;
 
             _productWarehouseInventoryRepository.Update(pwis);
-            
+
+            //event notification
             foreach (var pwi in pwis)
             {
                 _eventPublisher.EntityUpdated(pwi);
@@ -2679,16 +2607,16 @@ namespace Nop.Services.Catalog
                 where dcm.DiscountId == discount.Id
                 select new { product = p, dcm };
 
-            if (!mappingsWithProducts.Any())
-                return;
-
-            foreach (var pdcm in mappingsWithProducts)
+            foreach (var pdcm in mappingsWithProducts.ToList())
             {
                 _discountProductMappingRepository.Delete(pdcm.dcm);
+                //event notification
+                _eventPublisher.EntityDeleted(pdcm.dcm);
+
                 //update "HasDiscountsApplied" property
-                UpdateHasDiscountsApplied(pdcm.product);                    
-            }   
-        }        
+                UpdateHasDiscountsApplied(pdcm.product);
+            }
+        }
 
         /// <summary>
         /// Get a discount-product mapping records by product identifier

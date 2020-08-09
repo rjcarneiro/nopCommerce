@@ -4,9 +4,9 @@ using System.ComponentModel;
 using System.Linq;
 using System.Net;
 using System.Text;
+using System.Text.Encodings.Web;
 using Microsoft.AspNetCore.Mvc.Rendering;
 using Nop.Core;
-using Nop.Core.Caching;
 using Nop.Core.Domain.Catalog;
 using Nop.Core.Domain.Directory;
 using Nop.Core.Domain.Discounts;
@@ -25,7 +25,6 @@ using Nop.Services.Orders;
 using Nop.Services.Seo;
 using Nop.Services.Shipping;
 using Nop.Services.Stores;
-using Nop.Web.Areas.Admin.Infrastructure.Cache;
 using Nop.Web.Areas.Admin.Infrastructure.Mapper.Extensions;
 using Nop.Web.Areas.Admin.Models.Catalog;
 using Nop.Web.Areas.Admin.Models.Orders;
@@ -720,7 +719,7 @@ namespace Nop.Web.Areas.Admin.Factories
                     //fill in additional values (not existing in the entity)
                     productModel.SeName = _urlRecordService.GetSeName(product, 0, true, false);
                     var defaultProductPicture = _pictureService.GetPicturesByProductId(product.Id, 1).FirstOrDefault();
-                    productModel.PictureThumbnailUrl = _pictureService.GetPictureUrl(defaultProductPicture, 75);
+                    productModel.PictureThumbnailUrl = _pictureService.GetPictureUrl(ref defaultProductPicture, 75);
                     productModel.ProductTypeName = _localizationService.GetLocalizedEnum(product.ProductType);
                     if (product.ProductType == ProductType.SimpleProduct && product.ManageInventoryMethod == ManageInventoryMethod.ManageStock)
                         productModel.StockQuantityStr = _productService.GetTotalStockQuantity(product).ToString();
@@ -762,6 +761,9 @@ namespace Nop.Web.Areas.Admin.Factories
                 model.LastStockQuantity = product.StockQuantity;
                 model.ProductTags = string.Join(", ", _productTagService.GetAllProductTagsByProductId(product.Id).Select(tag => tag.Name));
                 model.ProductAttributesExist = _productAttributeService.GetAllProductAttributes().Any();
+
+                model.CanCreateCombinations = _productAttributeService
+                    .GetProductAttributeMappingsByProductId(product.Id).Any(pam => _productAttributeService.GetProductAttributeValues(pam.Id).Any());
 
                 if (!excludeProperties)
                 {
@@ -906,6 +908,22 @@ namespace Nop.Web.Areas.Admin.Factories
 
             //prepare model stores
             _storeMappingSupportedModelFactory.PrepareModelStores(model, product, excludeProperties);
+
+            var productTags = _productTagService.GetAllProductTags();
+            var productTagsSb = new StringBuilder();
+            productTagsSb.Append("var initialProductTags = [");
+            for (var i = 0; i < productTags.Count; i++)
+            {
+                var tag = productTags[i];
+                productTagsSb.Append("'");
+                productTagsSb.Append(JavaScriptEncoder.Default.Encode(tag.Name));
+                productTagsSb.Append("'");
+                if (i != productTags.Count - 1) 
+                    productTagsSb.Append(",");
+            }
+            productTagsSb.Append("]");
+
+            model.InitialProductTags = productTagsSb.ToString();
 
             return model;
         }
@@ -1345,7 +1363,7 @@ namespace Nop.Web.Areas.Admin.Factories
                     var picture = _pictureService.GetPictureById(productPicture.PictureId)
                                   ?? throw new Exception("Picture cannot be loaded");
 
-                    productPictureModel.PictureUrl = _pictureService.GetPictureUrl(picture);
+                    productPictureModel.PictureUrl = _pictureService.GetPictureUrl(ref picture);
                     productPictureModel.OverrideAltAttribute = picture.AltAttribute;
                     productPictureModel.OverrideTitleAttribute = picture.TitleAttribute;
 
@@ -1483,9 +1501,7 @@ namespace Nop.Web.Areas.Admin.Factories
                     throw new ArgumentOutOfRangeException(nameof(attribute.AttributeType));
             }
 
-            Action<AddSpecificationAttributeLocalizedModel, int> localizedModelConfiguration;
-
-            localizedModelConfiguration = (locale, languageId) =>
+            void localizedModelConfiguration(AddSpecificationAttributeLocalizedModel locale, int languageId)
             {
                 switch (attribute.AttributeType)
                 {
@@ -1502,9 +1518,9 @@ namespace Nop.Web.Areas.Admin.Factories
                     default:
                         throw new ArgumentOutOfRangeException();
                 }
-            };
+            }
 
-            model.Locales = _localizedModelFactory.PrepareLocalizedModels(localizedModelConfiguration);
+            model.Locales = _localizedModelFactory.PrepareLocalizedModels((Action<AddSpecificationAttributeLocalizedModel, int>)localizedModelConfiguration);
 
             return model;
         }
@@ -1536,7 +1552,7 @@ namespace Nop.Web.Areas.Admin.Factories
                 throw new ArgumentNullException(nameof(searchModel));
 
             //get product tags
-            var productTags = _productTagService.GetAllProductTags()
+            var productTags = _productTagService.GetAllProductTags(tagName : searchModel.SearchTagName)
                 .OrderByDescending(tag => _productTagService.GetProductCount(tag.Id, storeId: 0, showHidden: true)).ToList()
                 .ToPagedList(searchModel);
 
@@ -1840,7 +1856,7 @@ namespace Nop.Web.Areas.Admin.Factories
             if (productAttributeMapping != null)
             {
                 //fill in model values from the entity
-                model = model ?? new ProductAttributeMappingModel
+                model ??= new ProductAttributeMappingModel
                 {
                     Id = productAttributeMapping.Id
                 };
@@ -1941,7 +1957,7 @@ namespace Nop.Web.Areas.Admin.Factories
                     var pictureThumbnailUrl = _pictureService.GetPictureUrl(value.PictureId, 75, false);
                     //little hack here. Grid is rendered wrong way with <img> without "src" attribute
                     if (string.IsNullOrEmpty(pictureThumbnailUrl))
-                        pictureThumbnailUrl = _pictureService.GetPictureUrl(null, 1);
+                        pictureThumbnailUrl = _pictureService.GetDefaultPictureUrl(targetSize: 1);
                     productAttributeValueModel.PictureThumbnailUrl = pictureThumbnailUrl;
 
                     return productAttributeValueModel;
@@ -1970,7 +1986,7 @@ namespace Nop.Web.Areas.Admin.Factories
             if (productAttributeValue != null)
             {
                 //fill in model values from the entity
-                model = model ?? new ProductAttributeValueModel
+                model ??= new ProductAttributeValueModel
                 {
                     ProductAttributeMappingId = productAttributeValue.ProductAttributeMappingId,
                     AttributeValueTypeId = productAttributeValue.AttributeValueTypeId,
@@ -2135,7 +2151,8 @@ namespace Nop.Web.Areas.Admin.Factories
                     var pictureThumbnailUrl = _pictureService.GetPictureUrl(combination.PictureId, 75, false);
                     //little hack here. Grid is rendered wrong way with <img> without "src" attribute
                     if (string.IsNullOrEmpty(pictureThumbnailUrl))
-                        pictureThumbnailUrl = _pictureService.GetPictureUrl(null, 1);
+                        pictureThumbnailUrl = _pictureService.GetDefaultPictureUrl(targetSize: 1);
+                        
                     productAttributeCombinationModel.PictureThumbnailUrl = pictureThumbnailUrl;
                     var warnings = _shoppingCartService.GetShoppingCartItemAttributeWarnings(_workContext.CurrentCustomer,
                         ShoppingCartType.ShoppingCart, product,
@@ -2167,7 +2184,7 @@ namespace Nop.Web.Areas.Admin.Factories
             if (productAttributeCombination != null)
             {
                 //fill in model values from the entity
-                model = model ?? new ProductAttributeCombinationModel
+                model ??= new ProductAttributeCombinationModel
                 {
                     AllowOutOfStockOrders = productAttributeCombination.AllowOutOfStockOrders,
                     AttributesXml = productAttributeCombination.AttributesXml,

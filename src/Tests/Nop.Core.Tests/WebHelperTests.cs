@@ -19,7 +19,7 @@ namespace Nop.Core.Tests
     {
         private DefaultHttpContext _httpContext;
         private Mock<IActionContextAccessor> _actionContextAccessor;
-        private Mock<IApplicationLifetime> _applicationLifetime;
+        private Mock<IHostApplicationLifetime> _applicationLifetime;
         private Mock<INopFileProvider> _fileProvider;
         private Mock<IUrlHelperFactory> _urlHelperFactory;
         private IWebHelper _webHelper;
@@ -35,7 +35,7 @@ namespace Nop.Core.Tests
             _httpContext.Request.Headers.Add(HeaderNames.Host, "www.Example.com");
 
             _actionContextAccessor = new Mock<IActionContextAccessor>();
-            _applicationLifetime = new Mock<IApplicationLifetime>();
+            _applicationLifetime = new Mock<IHostApplicationLifetime>();
             _fileProvider = new Mock<INopFileProvider>();
             _urlHelperFactory = new Mock<IUrlHelperFactory>();
             _actionContextAccessor.Setup(x => x.ActionContext).Returns(new ActionContext(_httpContext, new RouteData(), new ActionDescriptor()));
@@ -137,6 +137,13 @@ namespace Nop.Core.Tests
             //with fragment
             _webHelper.ModifyQueryString("http://www.example.com/?param1=value1&param2=value1#fragment", "param1", "value2")
                 .Should().Be("http://www.example.com/?param1=value2&param2=value1#fragment");
+        }
+
+        [Test]
+        public void Can_modify_queryString_in_virtual_directory()
+        {
+            _httpContext.Request.PathBase = "/nopCommercepath";
+            _webHelper.ModifyQueryString("/nopCommercepath/Controller/Action", "param1", "value1").Should().Be("/nopCommercepath/Controller/Action?param1=value1");
         }
     }
 

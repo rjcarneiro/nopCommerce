@@ -1,5 +1,7 @@
 ﻿using System;
 using System.Linq;
+using System.Text;
+using System.Text.Encodings.Web;
 using Microsoft.AspNetCore.Mvc.Rendering;
 using Nop.Core.Domain.Blogs;
 using Nop.Core.Domain.Catalog;
@@ -120,7 +122,7 @@ namespace Nop.Web.Areas.Admin.Factories
 
             //get blog posts
             var blogPosts = _blogService.GetAllBlogPosts(storeId: searchModel.SearchStoreId, showHidden: true,
-                pageIndex: searchModel.Page - 1, pageSize: searchModel.PageSize);
+                pageIndex: searchModel.Page - 1, pageSize: searchModel.PageSize, title : searchModel.SearchTitle);
 
             //prepare list model
             var model = new BlogPostListModel().PrepareToGrid(searchModel, blogPosts, () =>
@@ -176,7 +178,26 @@ namespace Nop.Web.Areas.Admin.Factories
 
             //set default values for the new model
             if (blogPost == null)
+            {
                 model.AllowComments = true;
+                model.IncludeInSitemap = true;
+            }
+
+            var blogTags = _blogService.GetAllBlogPostTags(0, 0, true);
+            var blogTagsSb = new StringBuilder();
+            blogTagsSb.Append("var initialBlogTags = [");
+            for (var i = 0; i < blogTags.Count; i++)
+            {
+                var tag = blogTags[i];
+                blogTagsSb.Append("'");
+                blogTagsSb.Append(JavaScriptEncoder.Default.Encode(tag.Name));
+                blogTagsSb.Append("'");
+                if (i != blogTags.Count - 1) 
+                    blogTagsSb.Append(",");
+            }
+            blogTagsSb.Append("]");
+
+            model.InitialBlogTags = blogTagsSb.ToString();
 
             //prepare available languages
             _baseAdminModelFactory.PrepareLanguages(model.AvailableLanguages, false);

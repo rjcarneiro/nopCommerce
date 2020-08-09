@@ -16,8 +16,8 @@ using Nop.Services.Security;
 using Nop.Services.Seo;
 using Nop.Web.Areas.Admin.Factories;
 using Nop.Web.Areas.Admin.Models.Common;
-using Nop.Web.Framework.Controllers;
 using Nop.Web.Framework;
+using Nop.Web.Framework.Controllers;
 
 namespace Nop.Web.Areas.Admin.Controllers
 {
@@ -33,7 +33,7 @@ namespace Nop.Web.Areas.Admin.Controllers
 
         private readonly ICommonModelFactory _commonModelFactory;
         private readonly ICustomerService _customerService;
-        private readonly IDataProvider _dataProvider;
+        private readonly INopDataProvider _dataProvider;
         private readonly IDateTimeHelper _dateTimeHelper;
         private readonly ILanguageService _languageService;
         private readonly ILocalizationService _localizationService;
@@ -41,8 +41,9 @@ namespace Nop.Web.Areas.Admin.Controllers
         private readonly INopFileProvider _fileProvider;
         private readonly INotificationService _notificationService;
         private readonly IPermissionService _permissionService;
+        private readonly IQueuedEmailService _queuedEmailService;
         private readonly IShoppingCartService _shoppingCartService;
-        private readonly IStaticCacheManager _cacheManager;
+        private readonly IStaticCacheManager _staticCacheManager;
         private readonly IUrlRecordService _urlRecordService;
         private readonly IWebHelper _webHelper;
         private readonly IWorkContext _workContext;
@@ -53,7 +54,7 @@ namespace Nop.Web.Areas.Admin.Controllers
 
         public CommonController(ICommonModelFactory commonModelFactory,
             ICustomerService customerService,
-            IDataProvider dataProvider,
+            INopDataProvider dataProvider,
             IDateTimeHelper dateTimeHelper,
             ILanguageService languageService,
             ILocalizationService localizationService,
@@ -61,8 +62,9 @@ namespace Nop.Web.Areas.Admin.Controllers
             INopFileProvider fileProvider,
             INotificationService notificationService,
             IPermissionService permissionService,
+            IQueuedEmailService queuedEmailService,
             IShoppingCartService shoppingCartService,
-            IStaticCacheManager cacheManager,
+            IStaticCacheManager staticCacheManager,
             IUrlRecordService urlRecordService,
             IWebHelper webHelper,
             IWorkContext workContext)
@@ -77,8 +79,9 @@ namespace Nop.Web.Areas.Admin.Controllers
             _fileProvider = fileProvider;
             _notificationService = notificationService;
             _permissionService = permissionService;
+            _queuedEmailService = queuedEmailService;
             _shoppingCartService = shoppingCartService;
-            _cacheManager = cacheManager;
+            _staticCacheManager = staticCacheManager;
             _urlRecordService = urlRecordService;
             _webHelper = webHelper;
             _workContext = workContext;
@@ -175,7 +178,7 @@ namespace Nop.Web.Areas.Admin.Controllers
                     if (fileName.Equals("index.htm", StringComparison.InvariantCultureIgnoreCase))
                         continue;
 
-                    var info = _fileProvider.GetFileInfo(_fileProvider.Combine(EXPORT_IMPORT_PATH, fileName));
+                    var info = _fileProvider.GetFileInfo(fullPath);
                     var lastModifiedTimeUtc = info.LastModified.UtcDateTime;
                     if ((!startDateValue.HasValue || startDateValue.Value < lastModifiedTimeUtc) &&
                         (!endDateValue.HasValue || lastModifiedTimeUtc < endDateValue.Value))
@@ -214,7 +217,7 @@ namespace Nop.Web.Areas.Admin.Controllers
 
             try
             {
-                _dataProvider.BackupDatabase(_maintenanceService.GetNewBackupFilePath());
+                _dataProvider.BackupDatabase(_maintenanceService.CreateNewBackupFilePath());
                 _notificationService.SuccessNotification(_localizationService.GetResource("Admin.System.Maintenance.BackupDatabase.BackupCreated"));
             }
             catch (Exception exc)
@@ -289,6 +292,24 @@ namespace Nop.Web.Areas.Admin.Controllers
             return View(model);
         }
 
+        [HttpPost, ActionName("Maintenance")]
+        [FormValueRequired("delete-already-sent-queued-emails")]
+        public virtual IActionResult MaintenanceDeleteAlreadySentQueuedEmails(MaintenanceModel model)
+        {
+            if (!_permissionService.Authorize(StandardPermissionProvider.ManageMaintenance))
+                return AccessDeniedView();
+
+            var startDateValue = model.DeleteAlreadySentQueuedEmails.StartDate == null ? null
+                            : (DateTime?)_dateTimeHelper.ConvertToUtcTime(model.DeleteAlreadySentQueuedEmails.StartDate.Value, _dateTimeHelper.CurrentTimeZone);
+
+            var endDateValue = model.DeleteAlreadySentQueuedEmails.EndDate == null ? null
+                            : (DateTime?)_dateTimeHelper.ConvertToUtcTime(model.DeleteAlreadySentQueuedEmails.EndDate.Value, _dateTimeHelper.CurrentTimeZone).AddDays(1);
+
+            model.DeleteAlreadySentQueuedEmails.NumberOfDeletedEmails = _queuedEmailService.DeleteAlreadySentEmails(startDateValue, endDateValue);
+
+            return View(model);
+        }
+
         public virtual IActionResult SetLanguage(int langid, string returnUrl = "")
         {
             var language = _languageService.GetLanguageById(langid);
@@ -312,7 +333,7 @@ namespace Nop.Web.Areas.Admin.Controllers
             if (!_permissionService.Authorize(StandardPermissionProvider.ManageMaintenance))
                 return AccessDeniedView();
 
-            _cacheManager.Clear();
+            _staticCacheManager.Clear();
 
             //home page
             if (string.IsNullOrEmpty(returnUrl))
@@ -331,18 +352,29 @@ namespace Nop.Web.Areas.Admin.Controllers
             if (!_permissionService.Authorize(StandardPermissionProvider.ManageMaintenance))
                 return AccessDeniedView();
 
-            //restart application
-            _webHelper.RestartAppDomain();
-
             //home page
             if (string.IsNullOrEmpty(returnUrl))
-                return RedirectToAction("Index", "Home", new { area = AreaNames.Admin });
+                returnUrl = Url.Action("Index", "Home", new { area = AreaNames.Admin });
 
             //prevent open redirection attack
             if (!Url.IsLocalUrl(returnUrl))
-                return RedirectToAction("Index", "Home", new { area = AreaNames.Admin });
+                returnUrl = Url.Action("Index", "Home", new { area = AreaNames.Admin });
 
-            return Redirect(returnUrl);
+            return View("RestartApplication", returnUrl);
+        }
+
+        public virtual IActionResult RestartApplication()
+        {
+            if (!_permissionService.Authorize(StandardPermissionProvider.ManageMaintenance) &&
+                !_permissionService.Authorize(StandardPermissionProvider.ManagePlugins))
+            {
+                return AccessDeniedView();
+            }
+
+            //restart application
+            _webHelper.RestartAppDomain();
+
+            return new EmptyResult();
         }
 
         public virtual IActionResult SeNames()

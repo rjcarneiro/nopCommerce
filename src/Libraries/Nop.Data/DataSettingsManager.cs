@@ -32,8 +32,8 @@ namespace Nop.Data
             if (!reloadSettings && Singleton<DataSettings>.Instance != null)
                 return Singleton<DataSettings>.Instance;
 
-            fileProvider = fileProvider ?? CommonHelper.DefaultFileProvider;
-            filePath = filePath ?? fileProvider.MapPath(NopDataSettingsDefaults.FilePath);
+            fileProvider ??= CommonHelper.DefaultFileProvider;
+            filePath ??= fileProvider.MapPath(NopDataSettingsDefaults.FilePath);
 
             //check whether file exists
             if (!fileProvider.FileExists(filePath))
@@ -64,6 +64,10 @@ namespace Nop.Data
                                 continue;
                             case "DataConnectionString":
                                 dataSettings.ConnectionString = value;
+                                continue;
+                            case "SQLCommandTimeout":
+                                //If parsing isn't successful, we set a negative timeout, that means the current provider will usе a default value
+                                dataSettings.SQLCommandTimeout = int.TryParse(value, out var timeout) ? timeout : -1;
                                 continue;
                             default:
                                 dataSettings.RawDataSettings.Add(key, value);
@@ -101,7 +105,7 @@ namespace Nop.Data
         {
             Singleton<DataSettings>.Instance = settings ?? throw new ArgumentNullException(nameof(settings));
 
-            fileProvider = fileProvider ?? CommonHelper.DefaultFileProvider;
+            fileProvider ??= CommonHelper.DefaultFileProvider;
             var filePath = fileProvider.MapPath(NopDataSettingsDefaults.FilePath);
 
             //create file if not exists
@@ -137,6 +141,14 @@ namespace Nop.Data
                 return _databaseIsInstalled.Value;
             }
         }
+
+        /// <summary>
+        /// Gets the command execution timeout.
+        /// </summary>
+        /// <value>
+        /// Number of seconds. Negative timeout value means that a default timeout will be used. 0 timeout value corresponds to infinite timeout.
+        /// </value>
+        public static int SQLCommandTimeout => LoadSettings()?.SQLCommandTimeout ?? -1;
 
         #endregion
     }

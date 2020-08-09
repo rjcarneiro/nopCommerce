@@ -19,7 +19,7 @@ namespace Nop.Services.Media.RoxyFileman
         private Dictionary<string, string> _settings;
         private Dictionary<string, string> _languageResources;
 
-        protected readonly IHostingEnvironment _hostingEnvironment;
+        protected readonly IWebHostEnvironment _webHostEnvironment;
         protected readonly IHttpContextAccessor _httpContextAccessor;
         protected readonly INopFileProvider _fileProvider;
         protected readonly IWebHelper _webHelper;
@@ -30,14 +30,14 @@ namespace Nop.Services.Media.RoxyFileman
 
         #region Ctor
 
-        protected BaseRoxyFilemanService(IHostingEnvironment hostingEnvironment,
+        protected BaseRoxyFilemanService(IWebHostEnvironment webHostEnvironment,
             IHttpContextAccessor httpContextAccessor,
             INopFileProvider fileProvider,
             IWebHelper webHelper,
             IWorkContext workContext,
             MediaSettings mediaSettings)
         {
-            _hostingEnvironment = hostingEnvironment;
+            _webHostEnvironment = webHostEnvironment;
             _httpContextAccessor = httpContextAccessor;
             _fileProvider = fileProvider;
             _webHelper = webHelper;
@@ -112,7 +112,28 @@ namespace Nop.Services.Media.RoxyFileman
             if (fileExtension == ".swf" || fileExtension == ".flv")
                 fileType = "flash";
 
-            return fileType;
+            // Media file types supported by HTML5
+            if (fileExtension == ".mp4" || fileExtension == ".webm" // video
+                || fileExtension == ".ogg") // audio
+                fileType = "media";
+
+            // These media extensions are supported by tinyMCE
+            if (fileExtension == ".mov" // video
+                || fileExtension == ".m4a" || fileExtension == ".mp3" || fileExtension == ".wav") // audio
+                fileType = "media";
+
+            /* These media extensions are not supported by HTML5 or tinyMCE out of the box
+             * but may possibly be supported if You find players for them.
+             * if (fileExtension == ".3gp" || fileExtension == ".flv" 
+             *     || fileExtension == ".rmvb" || fileExtension == ".wmv" || fileExtension == ".divx"
+             *     || fileExtension == ".divx" || fileExtension == ".mpg" || fileExtension == ".rmvb"
+             *     || fileExtension == ".vob" // video
+             *     || fileExtension == ".aif" || fileExtension == ".aiff" || fileExtension == ".amr"
+             *     || fileExtension == ".asf" || fileExtension == ".asx" || fileExtension == ".wma"
+             *     || fileExtension == ".mid" || fileExtension == ".mp2") // audio
+             *     fileType = "media"; */
+
+             return fileType;
         }
 
         /// <summary>
@@ -122,12 +143,12 @@ namespace Nop.Services.Media.RoxyFileman
         /// <returns>Path</returns>
         protected virtual string GetFullPath(string virtualPath)
         {
-            virtualPath = virtualPath ?? string.Empty;
+            virtualPath ??= string.Empty;
             if (!virtualPath.StartsWith("/"))
                 virtualPath = "/" + virtualPath;
             virtualPath = virtualPath.TrimEnd('/');
 
-            return _fileProvider.Combine(_hostingEnvironment.WebRootPath, virtualPath);
+            return _fileProvider.Combine(_webHostEnvironment.WebRootPath, virtualPath);
         }
 
         /// <summary>
@@ -235,7 +256,7 @@ namespace Nop.Services.Media.RoxyFileman
         /// <returns>Path</returns>
         protected virtual string GetVirtualPath(string path)
         {
-            path = path ?? string.Empty;
+            path ??= string.Empty;
 
             var rootDirectory = GetRootDirectory();
             if (!path.StartsWith(rootDirectory))

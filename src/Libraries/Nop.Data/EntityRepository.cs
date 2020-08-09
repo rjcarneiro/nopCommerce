@@ -1,6 +1,8 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Linq.Expressions;
+using System.Transactions;
 using LinqToDB;
 using LinqToDB.Data;
 using Nop.Core;
@@ -16,6 +18,16 @@ namespace Nop.Data
         #region Fields
 
         private ITable<TEntity> _entities;
+        private readonly INopDataProvider _dataProvider;
+
+        #endregion
+
+        #region Ctor
+
+        public EntityRepository(INopDataProvider dataProvider)
+        {
+            _dataProvider = dataProvider;
+        }
 
         #endregion
 
@@ -40,10 +52,7 @@ namespace Nop.Data
             if (entity == null)
                 throw new ArgumentNullException(nameof(entity));
 
-            using (var _dataConnection = new NopDataConnection())
-            {
-                entity.Id = _dataConnection.InsertWithInt32Identity(entity);
-            }
+            _dataProvider.InsertEntity(entity);
         }
 
         /// <summary>
@@ -54,25 +63,22 @@ namespace Nop.Data
         {
             if (entities == null)
                 throw new ArgumentNullException(nameof(entities));
-            using (var _dataConnection = new NopDataConnection())
-            {
-                _dataConnection.BeginTransaction();
 
-                try
-                {
-                    foreach (var entity in entities)
-                    {
-                        Insert(entity);
-                    }
+            using var transaction = new TransactionScope();
+            _dataProvider.BulkInsertEntities(entities);
+            transaction.Complete();
+        }
 
-                    _dataConnection.CommitTransaction();
-                }
-                catch
-                {
-                    _dataConnection.RollbackTransaction();
-                    throw;
-                }
-            }
+        /// <summary>
+        /// Loads the original copy of the entity
+        /// </summary>
+        /// <typeparam name="TEntity">Entity type</typeparam>
+        /// <param name="entity">Entity</param>
+        /// <returns>Copy of the passed entity</returns>
+        public virtual TEntity LoadOriginalCopy(TEntity entity)
+        {
+            return _dataProvider.GetTable<TEntity>()
+                .FirstOrDefault(e => e.Id == Convert.ToInt32(entity.Id));
         }
 
         /// <summary>
@@ -84,10 +90,7 @@ namespace Nop.Data
             if (entity == null)
                 throw new ArgumentNullException(nameof(entity));
 
-            using (var _dataConnection = new NopDataConnection())
-            {
-                _dataConnection.Update(entity);
-            }
+            _dataProvider.UpdateEntity(entity);
         }
 
         /// <summary>
@@ -114,10 +117,7 @@ namespace Nop.Data
             if (entity == null)
                 throw new ArgumentNullException(nameof(entity));
 
-            using (var _dataConnection = new NopDataConnection())
-            {
-                _dataConnection.Delete(entity);
-            }
+            _dataProvider.DeleteEntity(entity);
         }
 
         /// <summary>
@@ -129,10 +129,19 @@ namespace Nop.Data
             if (entities == null)
                 throw new ArgumentNullException(nameof(entities));
 
-            foreach (var entity in entities)
-            {
-                Delete(entity);
-            }
+            _dataProvider.BulkDeleteEntities(entities.ToList());
+        }
+
+        /// <summary>
+        /// Delete entities
+        /// </summary>
+        /// <param name="predicate">A function to test each element for a condition</param>
+        public virtual void Delete(Expression<Func<TEntity, bool>> predicate)
+        {
+            if (predicate == null)
+                throw new ArgumentNullException(nameof(predicate));
+
+            _dataProvider.BulkDeleteEntities(predicate);
         }
 
         /// <summary>
@@ -144,10 +153,7 @@ namespace Nop.Data
         /// <returns>Collection of query result records</returns>
         public virtual IList<TEntity> EntityFromSql(string storeProcedureName, params DataParameter[] dataParameters)
         {
-            using (var _dataConnection = new NopDataConnection())
-            {
-                return _dataConnection.ExecuteStoredProcedure<TEntity>(storeProcedureName, dataParameters?.ToArray());
-            }
+            return _dataProvider.QueryProc<TEntity>(storeProcedureName, dataParameters?.ToArray());
         }
 
         /// <summary>
@@ -156,10 +162,7 @@ namespace Nop.Data
         /// <param name="resetIdentity">Performs reset identity column</param>
         public virtual void Truncate(bool resetIdentity = false)
         {
-            using (var _dataConnection = new NopDataConnection())
-            {
-                _dataConnection.GetTable<TEntity>().Truncate(resetIdentity);
-            }
+            _dataProvider.GetTable<TEntity>().Truncate(resetIdentity);
         }
 
         #endregion
@@ -174,10 +177,7 @@ namespace Nop.Data
         /// <summary>
         /// Gets an entity set
         /// </summary>
-        protected virtual ITable<TEntity> Entities => _entities ?? (_entities = new DataContext
-        {
-            MappingSchema = NopDataConnection.AdditionalSchema
-        }.GetTable<TEntity>());
+        protected virtual ITable<TEntity> Entities => _entities ??= _dataProvider.GetTable<TEntity>();
 
         #endregion
     }

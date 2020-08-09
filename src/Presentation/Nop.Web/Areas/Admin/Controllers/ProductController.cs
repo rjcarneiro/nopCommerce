@@ -68,6 +68,7 @@ namespace Nop.Web.Areas.Admin.Controllers
         private readonly IShippingService _shippingService;
         private readonly IShoppingCartService _shoppingCartService;
         private readonly ISpecificationAttributeService _specificationAttributeService;
+        private readonly IStoreContext _storeContext;
         private readonly IUrlRecordService _urlRecordService;
         private readonly IWorkContext _workContext;
         private readonly VendorSettings _vendorSettings;
@@ -104,6 +105,7 @@ namespace Nop.Web.Areas.Admin.Controllers
             IShippingService shippingService,
             IShoppingCartService shoppingCartService,
             ISpecificationAttributeService specificationAttributeService,
+            IStoreContext storeContext,
             IUrlRecordService urlRecordService,
             IWorkContext workContext,
             VendorSettings vendorSettings)
@@ -136,6 +138,7 @@ namespace Nop.Web.Areas.Admin.Controllers
             _shippingService = shippingService;
             _shoppingCartService = shoppingCartService;
             _specificationAttributeService = specificationAttributeService;
+            _storeContext = storeContext;
             _urlRecordService = urlRecordService;
             _workContext = workContext;
             _vendorSettings = vendorSettings;
@@ -229,6 +232,7 @@ namespace Nop.Web.Areas.Admin.Controllers
         protected virtual void SaveProductAcl(Product product, ProductModel model)
         {
             product.SubjectToAcl = model.SelectedCustomerRoleIds.Any();
+            _productService.UpdateProduct(product);
 
             var existingAclRecords = _aclService.GetAclRecords(product);
             var allCustomerRoles = _customerService.GetAllCustomerRoles(true);
@@ -318,7 +322,7 @@ namespace Nop.Web.Areas.Admin.Controllers
                 {
                     //new discount
                     if (_productService.GetDiscountAppliedToProduct(product.Id, discount.Id) is null)
-                        _productService.DeleteDiscountProductMapping(new DiscountProductMapping { EntityId = product.Id, DiscountId = discount.Id });
+                        _productService.InsertDiscountProductMapping(new DiscountProductMapping { EntityId = product.Id, DiscountId = discount.Id });
                 }
                 else
                 {
@@ -342,7 +346,7 @@ namespace Nop.Web.Areas.Admin.Controllers
 
             foreach (var attribute in attributes)
             {
-                var controlId = $"{NopAttributePrefixDefaults.Product}{attribute.Id}";
+                var controlId = $"{NopCatalogDefaults.ProductAttributePrefix}{attribute.Id}";
                 StringValues ctrlAttributes;
 
                 switch (attribute.AttributeControlType)
@@ -554,7 +558,7 @@ namespace Nop.Web.Areas.Admin.Controllers
                         //update existing record
                         existingPwI.StockQuantity = stockQuantity;
                         existingPwI.ReservedQuantity = reservedQuantity;
-                        _productService.UpdateProduct(product);
+                        _productService.UpdateProductWarehouseInventory(existingPwI);
 
                         //quantity change history
                         _productService.AddStockQuantityHistoryEntry(product, existingPwI.StockQuantity - previousStockQuantity, existingPwI.StockQuantity,
@@ -585,8 +589,6 @@ namespace Nop.Web.Areas.Admin.Controllers
 
                     _productService.InsertProductWarehouseInventory(existingPwI);
 
-                    _productService.UpdateProduct(product);
-
                     //quantity change history
                     _productService.AddStockQuantityHistoryEntry(product, existingPwI.StockQuantity, existingPwI.StockQuantity,
                         existingPwI.WarehouseId, message);
@@ -603,7 +605,7 @@ namespace Nop.Web.Areas.Admin.Controllers
                 var attribute = _productAttributeService.GetProductAttributeMappingById(model.SelectedProductAttributeId);
                 if (attribute != null)
                 {
-                    var controlId = $"{NopAttributePrefixDefaults.Product}{attribute.Id}";
+                    var controlId = $"{NopCatalogDefaults.ProductAttributePrefix}{attribute.Id}";
                     switch (attribute.AttributeControlType)
                     {
                         case AttributeControlType.DropdownList:
@@ -930,12 +932,27 @@ namespace Nop.Web.Areas.Admin.Controllers
                 var prevSampleDownloadId = product.SampleDownloadId;
                 var previousStockQuantity = product.StockQuantity;
                 var previousWarehouseId = product.WarehouseId;
+                var previousProductType = product.ProductType;
 
                 //product
                 product = model.ToEntity(product);
 
                 product.UpdatedOnUtc = DateTime.UtcNow;
                 _productService.UpdateProduct(product);
+
+                //remove associated products
+                if (previousProductType == ProductType.GroupedProduct && product.ProductType == ProductType.SimpleProduct)
+                {
+                    var storeId = _storeContext.CurrentStore?.Id ?? 0;
+                    var vendorId = _workContext.CurrentVendor?.Id ?? 0;
+
+                    var associatedProducts = _productService.GetAssociatedProducts(product.Id, storeId, vendorId);
+                    foreach (var associatedProduct in associatedProducts)
+                    {
+                        associatedProduct.ParentGroupedProductId = 0;
+                        _productService.UpdateProduct(associatedProduct);
+                    }
+                }
 
                 //search engine name
                 model.SeName = _urlRecordService.ValidateSeName(product, model.SeName, product.Name, true);
@@ -1310,7 +1327,7 @@ namespace Nop.Web.Areas.Admin.Controllers
             var selectedProducts = _productService.GetProductsByIds(model.SelectedProductIds.ToArray());
             if (selectedProducts.Any())
             {
-                var existingRelatedProducts = _productService.GetRelatedProductsByProductId1(model.ProductId);
+                var existingRelatedProducts = _productService.GetRelatedProductsByProductId1(model.ProductId, showHidden: true);
                 foreach (var product in selectedProducts)
                 {
                     //a vendor should have access only to his products
@@ -1414,7 +1431,7 @@ namespace Nop.Web.Areas.Admin.Controllers
             var selectedProducts = _productService.GetProductsByIds(model.SelectedProductIds.ToArray());
             if (selectedProducts.Any())
             {
-                var existingCrossSellProducts = _productService.GetCrossSellProductsByProductId1(model.ProductId);
+                var existingCrossSellProducts = _productService.GetCrossSellProductsByProductId1(model.ProductId, showHidden: true);
                 foreach (var product in selectedProducts)
                 {
                     //a vendor should have access only to his products
@@ -1980,7 +1997,9 @@ namespace Nop.Web.Areas.Admin.Controllers
 
             _productTagService.DeleteProductTag(tag);
 
-            return new NullJsonResult();
+            _notificationService.SuccessNotification(_localizationService.GetResource("Admin.Catalog.ProductTags.Deleted"));
+
+            return RedirectToAction("ProductTags");
         }
 
         [HttpPost]
@@ -2014,8 +2033,8 @@ namespace Nop.Web.Areas.Admin.Controllers
             return View(model);
         }
 
-        [HttpPost]
-        public virtual IActionResult EditProductTag(ProductTagModel model)
+        [HttpPost, ParameterBasedOnFormName("save-continue", "continueEditing")]
+        public virtual IActionResult EditProductTag(ProductTagModel model, bool continueEditing)
         {
             if (!_permissionService.Authorize(StandardPermissionProvider.ManageProductTags))
                 return AccessDeniedView();
@@ -2033,8 +2052,9 @@ namespace Nop.Web.Areas.Admin.Controllers
                 //locales
                 UpdateLocales(productTag, model);
 
-                ViewBag.RefreshPage = true;
-                return View(model);
+                _notificationService.SuccessNotification(_localizationService.GetResource("Admin.Catalog.ProductTags.Updated"));
+
+                return continueEditing ? RedirectToAction("EditProductTag", new { id = productTag.Id }) : RedirectToAction("ProductTags");
             }
 
             //prepare model
@@ -2200,9 +2220,16 @@ namespace Nop.Web.Areas.Admin.Controllers
                 products = products.Where(p => p.VendorId == _workContext.CurrentVendor.Id).ToList();
             }
 
-            var xml = _exportManager.ExportProductsToXml(products);
-
-            return File(Encoding.UTF8.GetBytes(xml), MimeTypes.ApplicationXml, "products.xml");
+            try
+            {
+                var xml = _exportManager.ExportProductsToXml(products);
+                return File(Encoding.UTF8.GetBytes(xml), MimeTypes.ApplicationXml, "products.xml");
+            }
+            catch (Exception exc)
+            {
+                _notificationService.ErrorNotification(exc);
+                return RedirectToAction("List");
+            }
         }
 
         [HttpPost, ActionName("ExportToExcel")]
@@ -2246,7 +2273,6 @@ namespace Nop.Web.Areas.Admin.Controllers
             try
             {
                 var bytes = _exportManager.ExportProductsToXlsx(products);
-
                 return File(bytes, MimeTypes.TextXlsx, "products.xlsx");
             }
             catch (Exception exc)
@@ -2277,9 +2303,16 @@ namespace Nop.Web.Areas.Admin.Controllers
                 products = products.Where(p => p.VendorId == _workContext.CurrentVendor.Id).ToList();
             }
 
-            var bytes = _exportManager.ExportProductsToXlsx(products);
-
-            return File(bytes, MimeTypes.TextXlsx, "products.xlsx");
+            try
+            {
+                var bytes = _exportManager.ExportProductsToXlsx(products);
+                return File(bytes, MimeTypes.TextXlsx, "products.xlsx");
+            }
+            catch (Exception exc)
+            {
+                _notificationService.ErrorNotification(exc);
+                return RedirectToAction("List");
+            }
         }
 
         [HttpPost]
@@ -3261,7 +3294,7 @@ namespace Nop.Web.Areas.Admin.Controllers
 
             //check whether the same attribute combination already exists
             var existingCombination = _productAttributeParser.FindProductAttributeCombination(product, attributesXml);
-            if (existingCombination != null && existingCombination != combination)
+            if (existingCombination != null && existingCombination.Id != model.Id && existingCombination.AttributesXml.Equals(attributesXml))
                 warnings.Add(_localizationService.GetResource("Admin.Catalog.Products.ProductAttributes.AttributeCombinations.AlreadyExists"));
 
             if (!warnings.Any() && ModelState.IsValid)

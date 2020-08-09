@@ -7,7 +7,7 @@ using Nop.Core.Domain.Blogs;
 using Nop.Core.Domain.Catalog;
 using Nop.Core.Domain.Stores;
 using Nop.Data;
-using Nop.Services.Caching.CachingDefaults;
+using Nop.Services.Caching;
 using Nop.Services.Caching.Extensions;
 using Nop.Services.Events;
 
@@ -21,29 +21,32 @@ namespace Nop.Services.Blogs
         #region Fields
 
         private readonly CatalogSettings _catalogSettings;
+        private readonly ICacheKeyService _cacheKeyService;
         private readonly IEventPublisher _eventPublisher;
         private readonly IRepository<BlogComment> _blogCommentRepository;
         private readonly IRepository<BlogPost> _blogPostRepository;
         private readonly IRepository<StoreMapping> _storeMappingRepository;
-        private readonly IStaticCacheManager _cacheManager;
-
+        private readonly IStaticCacheManager _staticCacheManager;
+        
         #endregion
 
         #region Ctor
 
         public BlogService(CatalogSettings catalogSettings,
+            ICacheKeyService cacheKeyService,
             IEventPublisher eventPublisher,
             IRepository<BlogComment> blogCommentRepository,
             IRepository<BlogPost> blogPostRepository,
             IRepository<StoreMapping> storeMappingRepository,
-            IStaticCacheManager cacheManager)
+            IStaticCacheManager staticCacheManager)
         {
             _catalogSettings = catalogSettings;
+            _cacheKeyService = cacheKeyService;
             _eventPublisher = eventPublisher;
             _blogCommentRepository = blogCommentRepository;
             _blogPostRepository = blogPostRepository;
             _storeMappingRepository = storeMappingRepository;
-            _cacheManager = cacheManager;
+            _staticCacheManager = staticCacheManager;
         }
 
         #endregion
@@ -90,10 +93,11 @@ namespace Nop.Services.Blogs
         /// <param name="pageIndex">Page index</param>
         /// <param name="pageSize">Page size</param>
         /// <param name="showHidden">A value indicating whether to show hidden records</param>
+        /// <param name="title">Filter by blog post title</param>
         /// <returns>Blog posts</returns>
         public virtual IPagedList<BlogPost> GetAllBlogPosts(int storeId = 0, int languageId = 0,
             DateTime? dateFrom = null, DateTime? dateTo = null,
-            int pageIndex = 0, int pageSize = int.MaxValue, bool showHidden = false)
+            int pageIndex = 0, int pageSize = int.MaxValue, bool showHidden = false, string title = null)
         {
             var query = _blogPostRepository.Table;
             if (dateFrom.HasValue)
@@ -102,6 +106,8 @@ namespace Nop.Services.Blogs
                 query = query.Where(b => dateTo.Value >= (b.StartDateUtc ?? b.CreatedOnUtc));
             if (languageId > 0)
                 query = query.Where(b => languageId == b.LanguageId);
+            if (!string.IsNullOrEmpty(title))
+                query = query.Where(b => b.Title.Contains(title));
             if (!showHidden)
             {
                 query = query.Where(b => !b.StartDateUtc.HasValue || b.StartDateUtc <= DateTime.UtcNow);
@@ -168,9 +174,9 @@ namespace Nop.Services.Blogs
         /// <returns>Blog post tags</returns>
         public virtual IList<BlogPostTag> GetAllBlogPostTags(int storeId, int languageId, bool showHidden = false)
         {
-            var cacheKey = NopBlogsCachingDefaults.BlogTagsModelKey.ToCacheKey(languageId, storeId);
+            var cacheKey = _cacheKeyService.PrepareKeyForDefaultCache(NopBlogsDefaults.BlogTagsModelCacheKey, languageId, storeId, showHidden);
 
-            var blogPostTags = _cacheManager.Get(cacheKey, () =>
+            var blogPostTags = _staticCacheManager.Get(cacheKey, () =>
             {
                 var rezBlogPostTags = new List<BlogPostTag>();
 
@@ -392,9 +398,9 @@ namespace Nop.Services.Blogs
             if (isApproved.HasValue)
                 query = query.Where(comment => comment.IsApproved == isApproved.Value);
 
-            var cacheKey = NopBlogsCachingDefaults.BlogCommentsNumberKey.ToCacheKey(blogPost, storeId, true);
+            var cacheKey = _cacheKeyService.PrepareKeyForDefaultCache(NopBlogsDefaults.BlogCommentsNumberCacheKey, blogPost, storeId, isApproved);
             
-            return _cacheManager.Get(cacheKey, () => query.Count());
+            return _staticCacheManager.Get(cacheKey, () => query.Count());
         }
 
         /// <summary>
@@ -440,6 +446,21 @@ namespace Nop.Services.Blogs
 
             //event notification
             _eventPublisher.EntityInserted(blogComment);
+        }
+
+        /// <summary>
+        /// Update a blog comment
+        /// </summary>
+        /// <param name="blogComment">Blog comment</param>
+        public virtual void UpdateBlogComment(BlogComment blogComment)
+        {
+            if (blogComment == null)
+                throw new ArgumentNullException(nameof(blogComment));
+
+            _blogCommentRepository.Update(blogComment);
+
+            //event notification
+            _eventPublisher.EntityUpdated(blogComment);
         }
 
         #endregion

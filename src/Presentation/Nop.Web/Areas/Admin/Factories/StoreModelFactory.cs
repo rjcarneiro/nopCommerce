@@ -94,7 +94,7 @@ namespace Nop.Web.Areas.Admin.Factories
             if (store != null)
             {
                 //fill in model values from the entity
-                model = model ?? store.ToModel<StoreModel>();
+                model ??= store.ToModel<StoreModel>();
 
                 //define localized model configuration action
                 localizedModelConfiguration = (locale, languageId) =>
@@ -104,7 +104,8 @@ namespace Nop.Web.Areas.Admin.Factories
             }
 
             //prepare available languages
-            _baseAdminModelFactory.PrepareLanguages(model.AvailableLanguages, defaultItemText: _localizationService.GetResource("Admin.Configuration.Stores.Fields.DefaultLanguage.DefaultItemText"));
+            _baseAdminModelFactory.PrepareLanguages(model.AvailableLanguages, 
+                defaultItemText: _localizationService.GetResource("Admin.Common.EmptyItemText"));
 
             //prepare localized models
             if (!excludeProperties)

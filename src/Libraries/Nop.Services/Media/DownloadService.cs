@@ -2,15 +2,9 @@
 using System.IO;
 using System.Linq;
 using Microsoft.AspNetCore.Http;
-using Nop.Core.Domain.Catalog;
 using Nop.Core.Domain.Media;
-using Nop.Core.Domain.Orders;
-using Nop.Core.Domain.Payments;
 using Nop.Data;
-using Nop.Services.Caching.Extensions;
-using Nop.Services.Catalog;
 using Nop.Services.Events;
-using Nop.Services.Orders;
 
 namespace Nop.Services.Media
 {
@@ -23,21 +17,15 @@ namespace Nop.Services.Media
 
         private readonly IEventPublisher _eventPubisher;
         private readonly IRepository<Download> _downloadRepository;
-        private readonly IProductService _productService;
-        private readonly IOrderService _orderService;
         #endregion
 
         #region Ctor
 
         public DownloadService(IEventPublisher eventPubisher,
-            IRepository<Download> downloadRepository,
-            IOrderService orderService,
-            IProductService productService)
+            IRepository<Download> downloadRepository)
         {
             _eventPubisher = eventPubisher;
             _downloadRepository = downloadRepository;
-            _orderService = orderService;
-            _productService = productService;
         }
 
         #endregion
@@ -54,7 +42,7 @@ namespace Nop.Services.Media
             if (downloadId == 0)
                 return null;
 
-            return _downloadRepository.ToCachedGetById(downloadId);
+            return _downloadRepository.GetById(downloadId);
         }
 
         /// <summary>
@@ -85,6 +73,7 @@ namespace Nop.Services.Media
 
             _downloadRepository.Delete(download);
 
+            //event notification
             _eventPubisher.EntityDeleted(download);
         }
 
@@ -99,6 +88,7 @@ namespace Nop.Services.Media
 
             _downloadRepository.Insert(download);
 
+            //event notification
             _eventPubisher.EntityInserted(download);
         }
 
@@ -113,91 +103,8 @@ namespace Nop.Services.Media
 
             _downloadRepository.Update(download);
 
+            //event notification
             _eventPubisher.EntityUpdated(download);
-        }
-
-        /// <summary>
-        /// Gets a value indicating whether download is allowed
-        /// </summary>
-        /// <param name="orderItem">Order item to check</param>
-        /// <returns>True if download is allowed; otherwise, false.</returns>
-        public virtual bool IsDownloadAllowed(OrderItem orderItem)
-        {
-            if (orderItem is null)
-                return false;
-
-            var order = _orderService.GetOrderById(orderItem.OrderId);
-            if (order == null || order.Deleted)
-                return false;
-
-            //order status
-            if (order.OrderStatus == OrderStatus.Cancelled)
-                return false;
-
-            var product = _productService.GetProductById(orderItem.ProductId);
-
-            if (product == null || !product.IsDownload)
-                return false;
-
-            //payment status
-            switch (product.DownloadActivationType)
-            {
-                case DownloadActivationType.WhenOrderIsPaid:
-                    if (order.PaymentStatus == PaymentStatus.Paid && order.PaidDateUtc.HasValue)
-                    {
-                        //expiration date
-                        if (product.DownloadExpirationDays.HasValue)
-                        {
-                            if (order.PaidDateUtc.Value.AddDays(product.DownloadExpirationDays.Value) > DateTime.UtcNow)
-                            {
-                                return true;
-                            }
-                        }
-                        else
-                        {
-                            return true;
-                        }
-                    }
-                    
-                    break;
-                case DownloadActivationType.Manually:
-                    if (orderItem.IsDownloadActivated)
-                    {
-                        //expiration date
-                        if (product.DownloadExpirationDays.HasValue)
-                        {
-                            if (order.CreatedOnUtc.AddDays(product.DownloadExpirationDays.Value) > DateTime.UtcNow)
-                            {
-                                return true;
-                            }
-                        }
-                        else
-                        {
-                            return true;
-                        }
-                    }
-                   
-                    break;
-                default:
-                    break;
-            }
-
-            return false;
-        }
-
-        /// <summary>
-        /// Gets a value indicating whether license download is allowed
-        /// </summary>
-        /// <param name="orderItem">Order item to check</param>
-        /// <returns>True if license download is allowed; otherwise, false.</returns>
-        public virtual bool IsLicenseDownloadAllowed(OrderItem orderItem)
-        {
-            if (orderItem == null)
-                return false;
-
-            return IsDownloadAllowed(orderItem) &&
-                orderItem.LicenseDownloadId.HasValue &&
-                orderItem.LicenseDownloadId > 0;
         }
 
         /// <summary>
@@ -207,15 +114,11 @@ namespace Nop.Services.Media
         /// <returns>Download binary array</returns>
         public virtual byte[] GetDownloadBits(IFormFile file)
         {
-            using (var fileStream = file.OpenReadStream())
-            {
-                using (var ms = new MemoryStream())
-                {
-                    fileStream.CopyTo(ms);
-                    var fileBytes = ms.ToArray();
-                    return fileBytes;
-                }
-            }
+            using var fileStream = file.OpenReadStream();
+            using var ms = new MemoryStream();
+            fileStream.CopyTo(ms);
+            var fileBytes = ms.ToArray();
+            return fileBytes;
         }
 
         #endregion

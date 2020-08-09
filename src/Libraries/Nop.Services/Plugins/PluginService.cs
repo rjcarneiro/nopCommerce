@@ -6,7 +6,7 @@ using Nop.Core;
 using Nop.Core.Domain.Catalog;
 using Nop.Core.Domain.Customers;
 using Nop.Core.Infrastructure;
-using Nop.Data;
+using Nop.Data.Migrations;
 using Nop.Services.Customers;
 using Nop.Services.Localization;
 using Nop.Services.Logging;
@@ -22,7 +22,7 @@ namespace Nop.Services.Plugins
 
         private readonly CatalogSettings _catalogSettings;
         private readonly ICustomerService _customerService;
-        private readonly IDataProvider _dataProvider;
+        private readonly IMigrationManager _migrationManager;
         private readonly ILogger _logger;
         private readonly INopFileProvider _fileProvider;
         private readonly IPluginsInfo _pluginsInfo;
@@ -34,14 +34,14 @@ namespace Nop.Services.Plugins
 
         public PluginService(CatalogSettings catalogSettings,
             ICustomerService customerService,
-            IDataProvider dataProvider,
+            IMigrationManager migrationManager,
             ILogger logger,
             INopFileProvider fileProvider,
             IWebHelper webHelper)
         {
             _catalogSettings = catalogSettings;
             _customerService = customerService;
-            _dataProvider = dataProvider;
+            _migrationManager = migrationManager;
             _logger = logger;
             _fileProvider = fileProvider;
             _pluginsInfo = Singleton<IPluginsInfo>.Instance;
@@ -63,20 +63,13 @@ namespace Nop.Services.Plugins
             if (pluginDescriptor == null)
                 throw new ArgumentNullException(nameof(pluginDescriptor));
 
-            switch (loadMode)
+            return loadMode switch
             {
-                case LoadPluginsMode.All:
-                    return true;
-
-                case LoadPluginsMode.InstalledOnly:
-                    return pluginDescriptor.Installed;
-
-                case LoadPluginsMode.NotInstalledOnly:
-                    return !pluginDescriptor.Installed;
-
-                default:
-                    throw new NotSupportedException(nameof(loadMode));
-            }
+                LoadPluginsMode.All => true,
+                LoadPluginsMode.InstalledOnly => pluginDescriptor.Installed,
+                LoadPluginsMode.NotInstalledOnly => !pluginDescriptor.Installed,
+                _ => throw new NotSupportedException(nameof(loadMode)),
+            };
         }
 
         /// <summary>
@@ -154,24 +147,54 @@ namespace Nop.Services.Plugins
             return pluginDescriptor.DependsOn?.Contains(dependsOnSystemName) ?? false;
         }
 
+        /// <summary>
+        /// Check whether to load the plugin based on the plugin friendly name passed
+        /// </summary>
+        /// <param name="pluginDescriptor">Plugin descriptor to check</param>
+        /// <param name="friendlyName">Plugin friendly name</param>
+        /// <returns>Result of check</returns>
+        protected virtual bool FilterByPluginFriendlyName(PluginDescriptor pluginDescriptor, string friendlyName)
+        {
+            if (pluginDescriptor == null)
+                throw new ArgumentNullException(nameof(pluginDescriptor));
+
+            if (string.IsNullOrEmpty(friendlyName))
+                return true;
+
+            return pluginDescriptor.FriendlyName.Contains(friendlyName, StringComparison.InvariantCultureIgnoreCase);
+        }
+
+        /// <summary>
+        /// Check whether to load the plugin based on the plugin author passed
+        /// </summary>
+        /// <param name="pluginDescriptor">Plugin descriptor to check</param>
+        /// <param name="author">Plugin author</param>
+        /// <returns>Result of check</returns>
+        protected virtual bool FilterByPluginAuthor(PluginDescriptor pluginDescriptor, string author)
+        {
+            if (pluginDescriptor == null)
+                throw new ArgumentNullException(nameof(pluginDescriptor));
+
+            if (string.IsNullOrEmpty(author))
+                return true;
+
+            return pluginDescriptor.Author.Contains(author, StringComparison.InvariantCultureIgnoreCase);
+        }
+
         protected virtual void DeletePluginData(Type pluginType)
         {
             var assembly = Assembly.GetAssembly(pluginType);
-
-            _dataProvider.ApplyDownMigrations(assembly);
-            _dataProvider.DeleteDatabaseSchemaIfExists(assembly);
+            _migrationManager.ApplyDownMigrations(assembly);
         }
 
-        protected virtual void InsertPluginData(Type pluginType)
+        protected virtual void InsertPluginData(Type pluginType, bool isUpdateProcess = false)
         {
             var assembly = Assembly.GetAssembly(pluginType);
-
-            _dataProvider.CreateDatabaseSchemaIfNotExists(assembly);
-            _dataProvider.ApplyUpMigrations(assembly);
+            _migrationManager.ApplyUpMigrations(assembly, isUpdateProcess);
         }
 
         #endregion
-
+                 
         #region Methods
 
         /// <summary>
@@ -182,10 +205,12 @@ namespace Nop.Services.Plugins
         /// <param name="customer">Filter by  customer; pass null to load all records</param>
         /// <param name="storeId">Filter by store; pass 0 to load all records</param>
         /// <param name="group">Filter by plugin group; pass null to load all records</param>
+        /// <param name="friendlyName">Filter by plugin friendly name; pass null to load all records</param>
+        /// <param name="author">Filter by plugin author; pass null to load all records</param>
         /// <param name="dependsOnSystemName">System name of the plugin to define dependencies</param>
         /// <returns>Plugin descriptors</returns>
         public virtual IEnumerable<PluginDescriptor> GetPluginDescriptors<TPlugin>(LoadPluginsMode loadMode = LoadPluginsMode.InstalledOnly,
-            Customer customer = null, int storeId = 0, string group = null, string dependsOnSystemName = "") where TPlugin : class, IPlugin
+            Customer customer = null, int storeId = 0, string group = null, string dependsOnSystemName = "", string friendlyName = null, string author = null) where TPlugin : class, IPlugin
         {
             var pluginDescriptors = _pluginsInfo.PluginDescriptors;
 
@@ -195,11 +220,13 @@ namespace Nop.Services.Plugins
                 FilterByCustomer(descriptor, customer) &&
                 FilterByStore(descriptor, storeId) &&
                 FilterByPluginGroup(descriptor, group) &&
-                FilterByDependsOn(descriptor, dependsOnSystemName));
+                FilterByDependsOn(descriptor, dependsOnSystemName) &&
+                FilterByPluginFriendlyName(descriptor, friendlyName) &&
+                FilterByPluginAuthor(descriptor, author)).ToList();
 
             //filter by the passed type
             if (typeof(TPlugin) != typeof(IPlugin))
-                pluginDescriptors = pluginDescriptors.Where(descriptor => typeof(TPlugin).IsAssignableFrom(descriptor.PluginType));
+                pluginDescriptors = pluginDescriptors.Where(descriptor => typeof(TPlugin).IsAssignableFrom(descriptor.PluginType)).ToList();
 
             //order by group name
             pluginDescriptors = pluginDescriptors.OrderBy(descriptor => descriptor.Group)
@@ -295,7 +322,7 @@ namespace Nop.Services.Plugins
             if (_pluginsInfo.PluginNamesToInstall.Any(item => item.SystemName == systemName))
                 return;
 
-            var pluginsAfterRestart = _pluginsInfo.InstalledPluginNames.Where(installedSystemName => !_pluginsInfo.PluginNamesToUninstall.Contains(installedSystemName)).ToList();
+            var pluginsAfterRestart = _pluginsInfo.InstalledPlugins.Select(pd => pd.SystemName).Where(installedSystemName => !_pluginsInfo.PluginNamesToUninstall.Contains(installedSystemName)).ToList();
             pluginsAfterRestart.AddRange(_pluginsInfo.PluginNamesToInstall.Select(item => item.SystemName));
 
             if (checkDependencies)
@@ -344,7 +371,7 @@ namespace Nop.Services.Plugins
 
                 foreach (var dependentPlugin in dependentPlugins)
                 {
-                    if (!_pluginsInfo.InstalledPluginNames.Contains(dependentPlugin.SystemName))
+                    if (!_pluginsInfo.InstalledPlugins.Select(pd => pd.SystemName).Contains(dependentPlugin.SystemName))
                         continue;
                     if (_pluginsInfo.PluginNamesToUninstall.Contains(dependentPlugin.SystemName))
                         continue;
@@ -410,7 +437,7 @@ namespace Nop.Services.Plugins
         /// </summary>
         public virtual void ClearInstalledPluginsList()
         {
-            _pluginsInfo.InstalledPluginNames.Clear();
+            _pluginsInfo.InstalledPlugins.Clear();
         }
 
         /// <summary>
@@ -444,7 +471,7 @@ namespace Nop.Services.Plugins
                     //remove and add plugin system name to appropriate lists
                     var pluginToInstall = _pluginsInfo.PluginNamesToInstall
                         .FirstOrDefault(plugin => plugin.SystemName.Equals(descriptor.SystemName));
-                    _pluginsInfo.InstalledPluginNames.Add(descriptor.SystemName);
+                    _pluginsInfo.InstalledPlugins.Add(descriptor.GetBaseInfoCopy);
                     _pluginsInfo.PluginNamesToInstall.Remove(pluginToInstall);
 
                     //activity log
@@ -499,7 +526,7 @@ namespace Nop.Services.Plugins
                     DeletePluginData(descriptor.PluginType);
 
                     //remove plugin system name from appropriate lists
-                    _pluginsInfo.InstalledPluginNames.Remove(descriptor.SystemName);
+                    _pluginsInfo.InstalledPlugins.Remove(descriptor);
                     _pluginsInfo.PluginNamesToUninstall.Remove(descriptor.SystemName);
 
                     //activity log
@@ -579,6 +606,35 @@ namespace Nop.Services.Plugins
             return _pluginsInfo.PluginNamesToInstall.Any()
                 || _pluginsInfo.PluginNamesToUninstall.Any()
                 || _pluginsInfo.PluginNamesToDelete.Any();
+        }
+
+        /// <summary>
+        /// Update plugins
+        /// </summary>
+        public virtual void UpdatePlugins()
+        {
+            foreach (var installedPlugin in _pluginsInfo.InstalledPlugins)
+            {
+                var newVersion = _pluginsInfo.PluginDescriptors.FirstOrDefault(pd =>
+                    pd.SystemName.Equals(installedPlugin.SystemName, StringComparison.InvariantCultureIgnoreCase));
+
+                if (newVersion == null)
+                    continue;
+
+                if (installedPlugin.Version == newVersion.Version)
+                    continue;
+                
+                //run new migrations from the plugin if there are exists
+                InsertPluginData(newVersion.PluginType, true);
+
+                //run the plugin update logic
+                newVersion.Instance<IPlugin>().Update(installedPlugin.Version, newVersion.Version);
+
+                //update installed plugin info
+                installedPlugin.Version = newVersion.Version;
+            }
+
+            _pluginsInfo.Save();
         }
 
         /// <summary>

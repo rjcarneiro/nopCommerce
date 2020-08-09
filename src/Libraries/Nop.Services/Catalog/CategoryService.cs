@@ -4,15 +4,15 @@ using System.Linq;
 using Nop.Core;
 using Nop.Core.Caching;
 using Nop.Core.Domain.Catalog;
-using Nop.Core.Domain.Common;
 using Nop.Core.Domain.Customers;
 using Nop.Core.Domain.Discounts;
 using Nop.Core.Domain.Security;
 using Nop.Core.Domain.Stores;
 using Nop.Data;
-using Nop.Services.Caching.CachingDefaults;
+using Nop.Services.Caching;
 using Nop.Services.Caching.Extensions;
 using Nop.Services.Customers;
+using Nop.Services.Discounts;
 using Nop.Services.Events;
 using Nop.Services.Localization;
 using Nop.Services.Security;
@@ -28,8 +28,8 @@ namespace Nop.Services.Catalog
         #region Fields
 
         private readonly CatalogSettings _catalogSettings;
-        private readonly CommonSettings _commonSettings;
         private readonly IAclService _aclService;
+        private readonly ICacheKeyService _cacheKeyService;
         private readonly ICustomerService _customerService;
         private readonly IEventPublisher _eventPublisher;
         private readonly ILocalizationService _localizationService;
@@ -49,8 +49,8 @@ namespace Nop.Services.Catalog
         #region Ctor
 
         public CategoryService(CatalogSettings catalogSettings,
-            CommonSettings commonSettings,
             IAclService aclService,
+            ICacheKeyService cacheKeyService,
             ICustomerService customerService,
             IEventPublisher eventPublisher,
             ILocalizationService localizationService,
@@ -66,8 +66,8 @@ namespace Nop.Services.Catalog
             IWorkContext workContext)
         {
             _catalogSettings = catalogSettings;
-            _commonSettings = commonSettings;
             _aclService = aclService;
+            _cacheKeyService = cacheKeyService;
             _customerService = customerService;
             _eventPublisher = eventPublisher;
             _localizationService = localizationService;
@@ -151,12 +151,12 @@ namespace Nop.Services.Catalog
         /// <returns>Categories</returns>
         public virtual IList<Category> GetAllCategories(int storeId = 0, bool showHidden = false)
         {
-            var key = string.Format(NopCatalogCachingDefaults.CategoriesAllCacheKey,
+            var key = _cacheKeyService.PrepareKeyForDefaultCache(NopCatalogDefaults.CategoriesAllCacheKey,
                 storeId,
-                string.Join(",", _customerService.GetCustomerRoleIds(_workContext.CurrentCustomer)),
+                _customerService.GetCustomerRoleIds(_workContext.CurrentCustomer),
                 showHidden);
 
-            var categories = _staticCacheManager.Get(key, () => GetAllCategories(string.Empty, storeId, showHidden: showHidden));
+            var categories = _staticCacheManager.Get(key, () => GetAllCategories(string.Empty, storeId, showHidden: showHidden).ToList());
 
             return categories;
         }
@@ -169,38 +169,15 @@ namespace Nop.Services.Catalog
         /// <param name="pageIndex">Page index</param>
         /// <param name="pageSize">Page size</param>
         /// <param name="showHidden">A value indicating whether to show hidden records</param>
+        /// <param name="overridePublished">
+        /// null - process "Published" property according to "showHidden" parameter
+        /// true - load only "Published" products
+        /// false - load only "Unpublished" products
+        /// </param>
         /// <returns>Categories</returns>
         public virtual IPagedList<Category> GetAllCategories(string categoryName, int storeId = 0,
-            int pageIndex = 0, int pageSize = int.MaxValue, bool showHidden = false)
+            int pageIndex = 0, int pageSize = int.MaxValue, bool showHidden = false, bool? overridePublished = null)
         {
-            if (_commonSettings.UseStoredProcedureForLoadingCategories)
-            {
-                //stored procedures are enabled for loading categories and supported by the database. 
-                //It's much faster with a large number of categories than the LINQ implementation below 
-
-                //prepare parameters
-                var showHiddenParameter = SqlParameterHelper.GetBooleanParameter("ShowHidden", showHidden);
-                var nameParameter = SqlParameterHelper.GetStringParameter("Name", categoryName ?? string.Empty);
-                var storeIdParameter = SqlParameterHelper.GetInt32Parameter("StoreId", !_catalogSettings.IgnoreStoreLimitations ? storeId : 0);
-                var pageIndexParameter = SqlParameterHelper.GetInt32Parameter("PageIndex", pageIndex);
-                var pageSizeParameter = SqlParameterHelper.GetInt32Parameter("PageSize", pageSize);
-                //pass allowed customer role identifiers as comma-delimited string
-                var customerRoleIdsParameter = SqlParameterHelper.GetStringParameter("CustomerRoleIds", !_catalogSettings.IgnoreAcl ? string.Join(",", _customerService.GetCustomerRoleIds(_workContext.CurrentCustomer)) : string.Empty);
-
-                var totalRecordsParameter = SqlParameterHelper.GetOutputInt32Parameter("TotalRecords");
-
-                //invoke stored procedure
-                var categories = _categoryRepository.EntityFromSql("CategoryLoadAllPaged",
-                    showHiddenParameter, nameParameter, storeIdParameter, customerRoleIdsParameter,
-                    pageIndexParameter, pageSizeParameter, totalRecordsParameter).ToList();
-
-                var totalRecords = totalRecordsParameter.Value != DBNull.Value ? Convert.ToInt32(totalRecordsParameter.Value) : 0;
-
-                //paging
-                return new PagedList<Category>(categories, pageIndex, pageSize, totalRecords);
-            }
-
-            //don't use a stored procedure. Use LINQ
             var query = _categoryRepository.Table;
             if (!showHidden)
                 query = query.Where(c => c.Published);
@@ -208,6 +185,8 @@ namespace Nop.Services.Catalog
                 query = query.Where(c => c.Name.Contains(categoryName));
             query = query.Where(c => !c.Deleted);
             query = query.OrderBy(c => c.ParentCategoryId).ThenBy(c => c.DisplayOrder).ThenBy(c => c.Id);
+            if (overridePublished.HasValue)
+                query = query.Where(c => c.Published == overridePublished.Value);
 
             if ((storeId > 0 && !_catalogSettings.IgnoreStoreLimitations) || (!showHidden && !_catalogSettings.IgnoreAcl))
             {
@@ -255,9 +234,9 @@ namespace Nop.Services.Catalog
         public virtual IList<Category> GetAllCategoriesByParentCategoryId(int parentCategoryId,
             bool showHidden = false)
         {
-            var key = string.Format(NopCatalogCachingDefaults.CategoriesByParentCategoryIdCacheKey, parentCategoryId,
-                showHidden, _workContext.CurrentCustomer.Id, _storeContext.CurrentStore.Id);
-            
+            var key = _cacheKeyService.PrepareKeyForDefaultCache(NopCatalogDefaults.CategoriesByParentCategoryIdCacheKey,
+                parentCategoryId, showHidden, _workContext.CurrentCustomer, _storeContext.CurrentStore);
+
             var query = _categoryRepository.Table;
 
             if (!showHidden)
@@ -274,21 +253,21 @@ namespace Nop.Services.Catalog
                     //ACL (access control list)
                     var allowedCustomerRolesIds = _customerService.GetCustomerRoleIds(_workContext.CurrentCustomer);
                     query = from c in query
-                        join acl in _aclRepository.Table
-                            on new
-                            {
-                                c1 = c.Id,
-                                c2 = nameof(Category)
-                            } 
-                            equals new
-                            {
-                                c1 = acl.EntityId,
-                                c2 = acl.EntityName
-                            } 
-                            into c_acl
-                        from acl in c_acl.DefaultIfEmpty()
-                        where !c.SubjectToAcl || allowedCustomerRolesIds.Contains(acl.CustomerRoleId)
-                        select c;
+                            join acl in _aclRepository.Table
+                                on new
+                                {
+                                    c1 = c.Id,
+                                    c2 = nameof(Category)
+                                }
+                                equals new
+                                {
+                                    c1 = acl.EntityId,
+                                    c2 = acl.EntityName
+                                }
+                                into c_acl
+                            from acl in c_acl.DefaultIfEmpty()
+                            where !c.SubjectToAcl || allowedCustomerRolesIds.Contains(acl.CustomerRoleId)
+                            select c;
                 }
 
                 if (!_catalogSettings.IgnoreStoreLimitations)
@@ -296,21 +275,21 @@ namespace Nop.Services.Catalog
                     //Store mapping
                     var currentStoreId = _storeContext.CurrentStore.Id;
                     query = from c in query
-                        join sm in _storeMappingRepository.Table
-                            on new
-                            {
-                                c1 = c.Id,
-                                c2 = nameof(Category)
-                            } 
-                            equals new
-                            {
-                                c1 = sm.EntityId,
-                                c2 = sm.EntityName
-                            } 
-                            into c_sm
-                        from sm in c_sm.DefaultIfEmpty()
-                        where !c.LimitedToStores || currentStoreId == sm.StoreId
-                        select c;
+                            join sm in _storeMappingRepository.Table
+                                on new
+                                {
+                                    c1 = c.Id,
+                                    c2 = nameof(Category)
+                                }
+                                equals new
+                                {
+                                    c1 = sm.EntityId,
+                                    c2 = sm.EntityName
+                                }
+                                into c_sm
+                            from sm in c_sm.DefaultIfEmpty()
+                            where !c.LimitedToStores || currentStoreId == sm.StoreId
+                            select c;
                 }
 
                 query = query.Distinct().OrderBy(c => c.DisplayOrder).ThenBy(c => c.Id);
@@ -335,16 +314,14 @@ namespace Nop.Services.Catalog
                         c.ShowOnHomepage
                         select c;
 
-            var categories = query.ToCachedList(NopCatalogCachingDefaults.CategoriesAllDisplayedOnHomepageCacheKey);
+            var categories = query.ToCachedList(_cacheKeyService.PrepareKeyForDefaultCache(NopCatalogDefaults.CategoriesAllDisplayedOnHomepageCacheKey));
 
             if (showHidden)
                 return categories;
 
-            var cacheKey =
-                string.Format(NopCatalogCachingDefaults.CategoriesDisplayedOnHomepageWithoutHiddenCacheKey,
-                    _storeContext.CurrentStore.Id,
-                    string.Join(",", _customerService.GetCustomerRoleIds(_workContext.CurrentCustomer)));
-                
+            var cacheKey = _cacheKeyService.PrepareKeyForDefaultCache(NopCatalogDefaults.CategoriesDisplayedOnHomepageWithoutHiddenCacheKey,
+                _storeContext.CurrentStore, _customerService.GetCustomerRoleIds(_workContext.CurrentCustomer));
+
             var result = _staticCacheManager.Get(cacheKey, () =>
             {
                 return categories
@@ -366,20 +343,19 @@ namespace Nop.Services.Catalog
             if (discount == null)
                 throw new ArgumentNullException(nameof(discount));
 
-            var discountId = discount.Id;
-            var cacheKey = NopDiscountCachingDefaults.DiscountCategoryIdsModelCacheKey.ToCacheKey(
-                discountId,
+            var cacheKey = _cacheKeyService.PrepareKeyForDefaultCache(NopDiscountDefaults.DiscountCategoryIdsModelCacheKey,
+                discount,
                 _customerService.GetCustomerRoleIds(customer),
                 _storeContext.CurrentStore);
 
             var result = _staticCacheManager.Get(cacheKey, () =>
             {
-                var ids = _discountCategoryMappingRepository.Table.Where(dmm => dmm.DiscountId == discountId).Select(dmm => dmm.EntityId).Distinct().ToList();
+                var ids = _discountCategoryMappingRepository.Table.Where(dmm => dmm.DiscountId == discount.Id).Select(dmm => dmm.EntityId).Distinct().ToList();
 
                 if (!discount.AppliedToSubCategories)
                     return ids;
 
-                ids.AddRange(ids.SelectMany(categoryId => GetChildCategoryIds(categoryId, _storeContext.CurrentStore.Id)));
+                ids.AddRange(ids.SelectMany(categoryId => GetChildCategoryIds(categoryId, _storeContext.CurrentStore.Id)).ToList());
 
                 return ids.Distinct().ToList();
             });
@@ -396,10 +372,10 @@ namespace Nop.Services.Catalog
         /// <returns>Category identifiers</returns>
         public virtual IList<int> GetChildCategoryIds(int parentCategoryId, int storeId = 0, bool showHidden = false)
         {
-            var cacheKey = string.Format(NopCatalogCachingDefaults.CategoriesChildIdentifiersCacheKey,
+            var cacheKey = _cacheKeyService.PrepareKeyForDefaultCache(NopCatalogDefaults.CategoriesChildIdentifiersCacheKey,
                 parentCategoryId,
-                string.Join(",", _customerService.GetCustomerRoleIds(_workContext.CurrentCustomer)),
-                _storeContext.CurrentStore.Id,
+                _customerService.GetCustomerRoleIds(_workContext.CurrentCustomer),
+                _storeContext.CurrentStore,
                 showHidden);
 
             return _staticCacheManager.Get(cacheKey, () =>
@@ -414,7 +390,7 @@ namespace Nop.Services.Catalog
                     .ToList();
                 categoriesIds.AddRange(categories);
                 categoriesIds.AddRange(categories.SelectMany(cId => GetChildCategoryIds(cId, storeId, showHidden)));
-                
+
                 return categoriesIds;
             });
         }
@@ -447,9 +423,9 @@ namespace Nop.Services.Catalog
 
             if (discountId.HasValue)
                 categories = from category in categories
-                    join dcm in _discountCategoryMappingRepository.Table on category.Id equals dcm.EntityId
-                    where dcm.DiscountId == discountId.Value
-                    select category;
+                             join dcm in _discountCategoryMappingRepository.Table on category.Id equals dcm.EntityId
+                             where dcm.DiscountId == discountId.Value
+                             select category;
 
             if (!showHidden)
                 categories = categories.Where(category => !category.Deleted);
@@ -572,16 +548,13 @@ namespace Nop.Services.Catalog
             if (categoryId == 0)
                 return new PagedList<ProductCategory>(new List<ProductCategory>(), pageIndex, pageSize);
 
-            var key = string.Format(NopCatalogCachingDefaults.ProductCategoriesAllByCategoryIdCacheKey, categoryId, showHidden,
-                pageIndex, pageSize, _workContext.CurrentCustomer.Id, _storeContext.CurrentStore.Id);
-
             var query = from pc in _productCategoryRepository.Table
-                join p in _productRepository.Table on pc.ProductId equals p.Id
-                where pc.CategoryId == categoryId &&
-                      !p.Deleted &&
-                      (showHidden || p.Published)
-                orderby pc.DisplayOrder, pc.Id
-                select pc;
+                        join p in _productRepository.Table on pc.ProductId equals p.Id
+                        where pc.CategoryId == categoryId &&
+                              !p.Deleted &&
+                              (showHidden || p.Published)
+                        orderby pc.DisplayOrder, pc.Id
+                        select pc;
 
             if (!showHidden && (!_catalogSettings.IgnoreAcl || !_catalogSettings.IgnoreStoreLimitations))
             {
@@ -590,22 +563,22 @@ namespace Nop.Services.Catalog
                     //ACL (access control list)
                     var allowedCustomerRolesIds = _customerService.GetCustomerRoleIds(_workContext.CurrentCustomer);
                     query = from pc in query
-                        join c in _categoryRepository.Table on pc.CategoryId equals c.Id
-                        join acl in _aclRepository.Table
-                            on new
-                            {
-                                c1 = c.Id,
-                                c2 = nameof(Category)
-                            } 
-                            equals new
-                            {
-                                c1 = acl.EntityId,
-                                c2 = acl.EntityName
-                            } 
-                            into c_acl
-                        from acl in c_acl.DefaultIfEmpty()
-                        where !c.SubjectToAcl || allowedCustomerRolesIds.Contains(acl.CustomerRoleId)
-                        select pc;
+                            join c in _categoryRepository.Table on pc.CategoryId equals c.Id
+                            join acl in _aclRepository.Table
+                                on new
+                                {
+                                    c1 = c.Id,
+                                    c2 = nameof(Category)
+                                }
+                                equals new
+                                {
+                                    c1 = acl.EntityId,
+                                    c2 = acl.EntityName
+                                }
+                                into c_acl
+                            from acl in c_acl.DefaultIfEmpty()
+                            where !c.SubjectToAcl || allowedCustomerRolesIds.Contains(acl.CustomerRoleId)
+                            select pc;
                 }
 
                 if (!_catalogSettings.IgnoreStoreLimitations)
@@ -613,28 +586,28 @@ namespace Nop.Services.Catalog
                     //Store mapping
                     var currentStoreId = _storeContext.CurrentStore.Id;
                     query = from pc in query
-                        join c in _categoryRepository.Table on pc.CategoryId equals c.Id
-                        join sm in _storeMappingRepository.Table
-                            on new
-                            {
-                                c1 = c.Id,
-                                c2 = nameof(Category)
-                            } 
-                            equals new
-                            {
-                                c1 = sm.EntityId,
-                                c2 = sm.EntityName
-                            } 
-                            into c_sm
-                        from sm in c_sm.DefaultIfEmpty()
-                        where !c.LimitedToStores || currentStoreId == sm.StoreId
-                        select pc;
+                            join c in _categoryRepository.Table on pc.CategoryId equals c.Id
+                            join sm in _storeMappingRepository.Table
+                                on new
+                                {
+                                    c1 = c.Id,
+                                    c2 = nameof(Category)
+                                }
+                                equals new
+                                {
+                                    c1 = sm.EntityId,
+                                    c2 = sm.EntityName
+                                }
+                                into c_sm
+                            from sm in c_sm.DefaultIfEmpty()
+                            where !c.LimitedToStores || currentStoreId == sm.StoreId
+                            select pc;
                 }
 
                 query = query.Distinct().OrderBy(pc => pc.DisplayOrder).ThenBy(pc => pc.Id);
             }
 
-            var productCategories = query.ToCachedPagedList(key, pageIndex, pageSize);
+            var productCategories = new PagedList<ProductCategory>(query, pageIndex, pageSize);
 
             return productCategories;
         }
@@ -663,16 +636,16 @@ namespace Nop.Services.Catalog
             if (productId == 0)
                 return new List<ProductCategory>();
 
-            var key = NopCatalogCachingDefaults.ProductCategoriesAllByProductIdCacheKey.ToCacheKey(productId,
-                showHidden, _workContext.CurrentCustomer.Id, storeId);
+            var key = _cacheKeyService.PrepareKeyForDefaultCache(NopCatalogDefaults.ProductCategoriesAllByProductIdCacheKey,
+                productId, showHidden, _workContext.CurrentCustomer, storeId);
 
             var query = from pc in _productCategoryRepository.Table
-                join c in _categoryRepository.Table on pc.CategoryId equals c.Id
-                where pc.ProductId == productId &&
-                      !c.Deleted &&
-                      (showHidden || c.Published)
-                orderby pc.DisplayOrder, pc.Id
-                select pc;
+                        join c in _categoryRepository.Table on pc.CategoryId equals c.Id
+                        where pc.ProductId == productId &&
+                              !c.Deleted &&
+                              (showHidden || c.Published)
+                        orderby pc.DisplayOrder, pc.Id
+                        select pc;
 
             if (showHidden)
                 return query.ToCachedList(key);
@@ -682,8 +655,8 @@ namespace Nop.Services.Catalog
                 .Select(c => c.Id).ToArray();
 
             query = from pc in query
-                where categoryIds.Contains(pc.CategoryId)
-                select pc;
+                    where categoryIds.Contains(pc.CategoryId)
+                    select pc;
 
             return query.ToCachedList(key);
         }
@@ -726,7 +699,7 @@ namespace Nop.Services.Catalog
                 throw new ArgumentNullException(nameof(productCategory));
 
             _productCategoryRepository.Update(productCategory);
-            
+
             //event notification
             _eventPublisher.EntityUpdated(productCategory);
         }
@@ -874,7 +847,7 @@ namespace Nop.Services.Catalog
             if (category == null)
                 throw new ArgumentNullException(nameof(category));
 
-            var breadcrumbCacheKey = NopCatalogCachingDefaults.CategoryBreadcrumbKey.ToCacheKey(
+            var breadcrumbCacheKey = _cacheKeyService.PrepareKeyForDefaultCache(NopCatalogDefaults.CategoryBreadcrumbCacheKey,
                 category,
                 _customerService.GetCustomerRoleIds(_workContext.CurrentCustomer),
                 _storeContext.CurrentStore,

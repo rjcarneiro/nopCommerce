@@ -27,7 +27,7 @@ namespace Nop.Core
 
         private readonly HostingConfig _hostingConfig;
         private readonly IActionContextAccessor _actionContextAccessor;
-        private readonly IApplicationLifetime _applicationLifetime;
+        private readonly IHostApplicationLifetime _hostApplicationLifetime;
         private readonly IHttpContextAccessor _httpContextAccessor;
         private readonly INopFileProvider _fileProvider;
         private readonly IUrlHelperFactory _urlHelperFactory;
@@ -38,14 +38,14 @@ namespace Nop.Core
 
         public WebHelper(HostingConfig hostingConfig,
             IActionContextAccessor actionContextAccessor,
-            IApplicationLifetime applicationLifetime,
+            IHostApplicationLifetime hostApplicationLifetime,
             IHttpContextAccessor httpContextAccessor,
             INopFileProvider fileProvider,
             IUrlHelperFactory urlHelperFactory)
         {
             _hostingConfig = hostingConfig;
             _actionContextAccessor = actionContextAccessor;
-            _applicationLifetime = applicationLifetime;
+            _hostApplicationLifetime = hostApplicationLifetime;
             _httpContextAccessor = httpContextAccessor;
             _fileProvider = fileProvider;
             _urlHelperFactory = urlHelperFactory;
@@ -85,23 +85,6 @@ namespace Nop.Core
         protected virtual bool IsIpAddressSet(IPAddress address)
         {
             return address != null && address.ToString() != IPAddress.IPv6Loopback.ToString();
-        }
-
-        /// <summary>
-        /// Try to write web.config file
-        /// </summary>
-        /// <returns></returns>
-        protected virtual bool TryWriteWebConfig()
-        {
-            try
-            {
-                _fileProvider.SetLastWriteTimeUtc(_fileProvider.MapPath(NopInfrastructureDefaults.WebConfigPath), DateTime.UtcNow);
-                return true;
-            }
-            catch
-            {
-                return false;
-            }
         }
 
         #endregion
@@ -316,7 +299,15 @@ namespace Nop.Core
             //prepare URI object
             var urlHelper = _urlHelperFactory.GetUrlHelper(_actionContextAccessor.ActionContext);
             var isLocalUrl = urlHelper.IsLocalUrl(url);
-            var uri = new Uri(isLocalUrl ? $"{GetStoreLocation().TrimEnd('/')}{url}" : url, UriKind.Absolute);
+
+            var uriStr = url;
+            if (isLocalUrl)
+            {
+                var pathBase = _httpContextAccessor.HttpContext.Request.PathBase;
+                uriStr = $"{GetStoreLocation().TrimEnd('/')}{(url.StartsWith(pathBase) ? url.Replace(pathBase, "") : url)}";
+            }
+
+            var uri = new Uri(uriStr, UriKind.Absolute);
 
             //get current query parameters
             var queryParameters = QueryHelpers.ParseQuery(uri.Query);
@@ -392,10 +383,10 @@ namespace Nop.Core
         public virtual T QueryString<T>(string name)
         {
             if (!IsRequestAvailable())
-                return default(T);
+                return default;
 
             if (StringValues.IsNullOrEmpty(_httpContextAccessor.HttpContext.Request.Query[name]))
-                return default(T);
+                return default;
 
             return CommonHelper.To<T>(_httpContextAccessor.HttpContext.Request.Query[name].ToString());
         }
@@ -403,22 +394,9 @@ namespace Nop.Core
         /// <summary>
         /// Restart application domain
         /// </summary>
-        /// <param name="makeRedirect">A value indicating whether we should made redirection after restart</param>
-        public virtual void RestartAppDomain(bool makeRedirect = false)
+        public virtual void RestartAppDomain()
         {
-            //the site will be restarted during the next request automatically
-            //"touch" web.config to force restart
-            var success = TryWriteWebConfig();
-            if (!success)
-            {
-                throw new NopException("nopCommerce needs to be restarted due to a configuration change, but was unable to do so." + Environment.NewLine +
-                    "To prevent this issue in the future, a change to the web server configuration is required:" + Environment.NewLine +
-                    "- run the application in a full trust environment, or" + Environment.NewLine +
-                    "- give the application write access to the 'web.config' file.");
-            }
-
-            if (Environment.OSVersion.Platform == PlatformID.Unix)
-                _applicationLifetime.StopApplication();
+            _hostApplicationLifetime.StopApplication();
         }
 
         /// <summary>

@@ -1,4 +1,5 @@
-using System;
+﻿using System;
+using System.Collections.Generic;
 using System.Linq;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -37,7 +38,6 @@ using Nop.Web.Factories;
 using Nop.Web.Framework;
 using Nop.Web.Framework.Controllers;
 using Nop.Web.Framework.Mvc.Filters;
-using Nop.Web.Framework.Security;
 using Nop.Web.Framework.Validators;
 using Nop.Web.Models.Customer;
 
@@ -189,6 +189,19 @@ namespace Nop.Web.Controllers
 
         #region Utilities
 
+        protected virtual void ValidateRequiredConsents(List<GdprConsent> consents, IFormCollection form)
+        {
+            foreach (var consent in consents)
+            {
+                var controlId = $"consent{consent.Id}";
+                var cbConsent = form[controlId];
+                if (StringValues.IsNullOrEmpty(cbConsent) || !cbConsent.ToString().Equals("on"))
+                {
+                    ModelState.AddModelError("", consent.RequiredMessage);
+                }
+            }
+        }
+
         protected virtual string ParseCustomCustomerAttributes(IFormCollection form)
         {
             if (form == null)
@@ -198,7 +211,7 @@ namespace Nop.Web.Controllers
             var attributes = _customerAttributeService.GetAllCustomerAttributes();
             foreach (var attribute in attributes)
             {
-                var controlId = $"{NopAttributePrefixDefaults.Customer}{attribute.Id}";
+                var controlId = $"{NopCustomerServicesDefaults.CustomerAttributePrefix}{attribute.Id}";
                 switch (attribute.AttributeControlType)
                 {
                     case AttributeControlType.DropdownList:
@@ -321,7 +334,7 @@ namespace Nop.Web.Controllers
                     _gdprService.InsertLog(customer, 0, GdprRequestType.ProfileChanged, $"{_localizationService.GetResource("Account.Fields.LastName")} = {newCustomerInfoModel.LastName}");
 
                 if (oldCustomerInfoModel.ParseDateOfBirth() != newCustomerInfoModel.ParseDateOfBirth())
-                    _gdprService.InsertLog(customer, 0, GdprRequestType.ProfileChanged, $"{_localizationService.GetResource("Account.Fields.DateOfBirth")} = {newCustomerInfoModel.ParseDateOfBirth().ToString()}");
+                    _gdprService.InsertLog(customer, 0, GdprRequestType.ProfileChanged, $"{_localizationService.GetResource("Account.Fields.DateOfBirth")} = {newCustomerInfoModel.ParseDateOfBirth()}");
 
                 if (oldCustomerInfoModel.Email != newCustomerInfoModel.Email)
                     _gdprService.InsertLog(customer, 0, GdprRequestType.ProfileChanged, $"{_localizationService.GetResource("Account.Fields.Email")} = {newCustomerInfoModel.Email}");
@@ -368,7 +381,7 @@ namespace Nop.Web.Controllers
 
         #region Login / logout
 
-        [HttpsRequirement(SslRequirement.Yes)]
+        [HttpsRequirement]
         //available even when a store is closed
         [CheckAccessClosedStore(true)]
         //available even when navigation is not allowed
@@ -509,9 +522,11 @@ namespace Nop.Web.Controllers
 
         #region Password recovery
 
-        [HttpsRequirement(SslRequirement.Yes)]
+        [HttpsRequirement]
         //available even when navigation is not allowed
         [CheckAccessPublicStore(true)]
+        //available even when a store is closed
+        [CheckAccessClosedStore(true)]
         public virtual IActionResult PasswordRecovery()
         {
             var model = new PasswordRecoveryModel();
@@ -525,6 +540,8 @@ namespace Nop.Web.Controllers
         [FormValueRequired("send-email")]
         //available even when navigation is not allowed
         [CheckAccessPublicStore(true)]
+        //available even when a store is closed
+        [CheckAccessClosedStore(true)]
         public virtual IActionResult PasswordRecoverySend(PasswordRecoveryModel model, bool captchaValid)
         {
             // validate CAPTCHA
@@ -562,9 +579,11 @@ namespace Nop.Web.Controllers
             return View(model);
         }
 
-        [HttpsRequirement(SslRequirement.Yes)]
+        [HttpsRequirement]
         //available even when navigation is not allowed
         [CheckAccessPublicStore(true)]
+        //available even when a store is closed
+        [CheckAccessClosedStore(true)]
         public virtual IActionResult PasswordRecoveryConfirm(string token, string email, Guid guid)
         {
             //For backward compatibility with previous versions where email was used as a parameter in the URL
@@ -577,7 +596,7 @@ namespace Nop.Web.Controllers
 
             if (string.IsNullOrEmpty(_genericAttributeService.GetAttribute<string>(customer, NopCustomerDefaults.PasswordRecoveryTokenAttribute)))
             {
-                return View(new PasswordRecoveryConfirmModel
+                return base.View(new PasswordRecoveryConfirmModel
                 {
                     DisablePasswordChanging = true,
                     Result = _localizationService.GetResource("Account.PasswordRecovery.PasswordAlreadyHasBeenChanged")
@@ -607,6 +626,8 @@ namespace Nop.Web.Controllers
         [FormValueRequired("set-password")]
         //available even when navigation is not allowed
         [CheckAccessPublicStore(true)]
+        //available even when a store is closed
+        [CheckAccessClosedStore(true)]
         public virtual IActionResult PasswordRecoveryConfirmPOST(string token, string email, Guid guid, PasswordRecoveryConfirmModel model)
         {
             //For backward compatibility with previous versions where email was used as a parameter in the URL
@@ -660,7 +681,7 @@ namespace Nop.Web.Controllers
 
         #region Register
 
-        [HttpsRequirement(SslRequirement.Yes)]
+        [HttpsRequirement]
         //available even when navigation is not allowed
         [CheckAccessPublicStore(true)]
         public virtual IActionResult Register()
@@ -712,6 +733,15 @@ namespace Nop.Web.Controllers
             if (_captchaSettings.Enabled && _captchaSettings.ShowOnRegistrationPage && !captchaValid)
             {
                 ModelState.AddModelError("", _localizationService.GetResource("Common.WrongCaptchaMessage"));
+            }
+
+            //GDPR
+            if (_gdprSettings.GdprEnabled)
+            {
+                var consents = _gdprService
+                    .GetAllConsents().Where(consent => consent.DisplayDuringRegistration && consent.IsRequired).ToList();
+
+                ValidateRequiredConsents(consents, form);
             }
 
             if (ModelState.IsValid)
@@ -1017,7 +1047,7 @@ namespace Nop.Web.Controllers
             return Json(new { Available = usernameAvailable, Text = statusText });
         }
 
-        [HttpsRequirement(SslRequirement.Yes)]
+        [HttpsRequirement]
         //available even when navigation is not allowed
         [CheckAccessPublicStore(true)]
         public virtual IActionResult AccountActivation(string token, string email, Guid guid)
@@ -1062,7 +1092,7 @@ namespace Nop.Web.Controllers
 
         #region My account / Info
 
-        [HttpsRequirement(SslRequirement.Yes)]
+        [HttpsRequirement]
         public virtual IActionResult Info()
         {
             if (!_customerService.IsRegistered(_workContext.CurrentCustomer))
@@ -1096,6 +1126,15 @@ namespace Nop.Web.Controllers
                 ModelState.AddModelError("", error);
             }
 
+            //GDPR
+            if (_gdprSettings.GdprEnabled)
+            {
+                var consents = _gdprService
+                    .GetAllConsents().Where(consent => consent.DisplayOnCustomerInfoPage && consent.IsRequired).ToList();
+
+                ValidateRequiredConsents(consents, form);
+            }
+
             try
             {
                 if (ModelState.IsValid)
@@ -1103,8 +1142,7 @@ namespace Nop.Web.Controllers
                     //username 
                     if (_customerSettings.UsernamesEnabled && _customerSettings.AllowUsersToChangeUsernames)
                     {
-                        if (
-                            !customer.Username.Equals(model.Username.Trim(), StringComparison.InvariantCultureIgnoreCase))
+                        if (!customer.Username.Equals(model.Username.Trim(), StringComparison.InvariantCultureIgnoreCase))
                         {
                             //change username
                             _customerRegistrationService.SetUsername(customer, model.Username.Trim());
@@ -1271,7 +1309,7 @@ namespace Nop.Web.Controllers
             });
         }
 
-        [HttpsRequirement(SslRequirement.Yes)]
+        [HttpsRequirement]
         //available even when navigation is not allowed
         [CheckAccessPublicStore(true)]
         public virtual IActionResult EmailRevalidation(string token, string email, Guid guid)
@@ -1333,7 +1371,7 @@ namespace Nop.Web.Controllers
 
         #region My account / Addresses
 
-        [HttpsRequirement(SslRequirement.Yes)]
+        [HttpsRequirement]
         public virtual IActionResult Addresses()
         {
             if (!_customerService.IsRegistered(_workContext.CurrentCustomer))
@@ -1344,7 +1382,7 @@ namespace Nop.Web.Controllers
         }
 
         [HttpPost]
-        [HttpsRequirement(SslRequirement.Yes)]
+        [HttpsRequirement]
         public virtual IActionResult AddressDelete(int addressId)
         {
             if (!_customerService.IsRegistered(_workContext.CurrentCustomer))
@@ -1369,7 +1407,7 @@ namespace Nop.Web.Controllers
             });
         }
 
-        [HttpsRequirement(SslRequirement.Yes)]
+        [HttpsRequirement]
         public virtual IActionResult AddressAdd()
         {
             if (!_customerService.IsRegistered(_workContext.CurrentCustomer))
@@ -1429,7 +1467,7 @@ namespace Nop.Web.Controllers
             return View(model);
         }
 
-        [HttpsRequirement(SslRequirement.Yes)]
+        [HttpsRequirement]
         public virtual IActionResult AddressEdit(int addressId)
         {
             if (!_customerService.IsRegistered(_workContext.CurrentCustomer))
@@ -1496,7 +1534,7 @@ namespace Nop.Web.Controllers
 
         #region My account / Downloadable products
 
-        [HttpsRequirement(SslRequirement.Yes)]
+        [HttpsRequirement]
         public virtual IActionResult DownloadableProducts()
         {
             if (!_customerService.IsRegistered(_workContext.CurrentCustomer))
@@ -1528,7 +1566,7 @@ namespace Nop.Web.Controllers
 
         #region My account / Change password
 
-        [HttpsRequirement(SslRequirement.Yes)]
+        [HttpsRequirement]
         public virtual IActionResult ChangePassword()
         {
             if (!_customerService.IsRegistered(_workContext.CurrentCustomer))
@@ -1575,7 +1613,7 @@ namespace Nop.Web.Controllers
 
         #region My account / Avatar
 
-        [HttpsRequirement(SslRequirement.Yes)]
+        [HttpsRequirement]
         public virtual IActionResult Avatar()
         {
             if (!_customerService.IsRegistered(_workContext.CurrentCustomer))
@@ -1666,7 +1704,7 @@ namespace Nop.Web.Controllers
 
         #region GDPR tools
 
-        [HttpsRequirement(SslRequirement.Yes)]
+        [HttpsRequirement]
         public virtual IActionResult GdprTools()
         {
             if (!_customerService.IsRegistered(_workContext.CurrentCustomer))
@@ -1721,7 +1759,7 @@ namespace Nop.Web.Controllers
         #region Check gift card balance
 
         //check gift card balance page
-        [HttpsRequirement(SslRequirement.Yes)]
+        [HttpsRequirement]
         //available even when a store is closed
         [CheckAccessClosedStore(true)]
         public virtual IActionResult CheckGiftCardBalance()

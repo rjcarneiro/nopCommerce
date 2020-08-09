@@ -74,6 +74,7 @@ namespace Nop.Web.Areas.Admin.Controllers
         protected virtual void SaveStoreMappings(Language language, LanguageModel model)
         {
             language.LimitedToStores = model.SelectedStoreIds.Any();
+            _languageService.UpdateLanguage(language);
 
             var existingStoreMappings = _storeMappingService.GetStoreMappings(language);
             var allStores = _storeService.GetAllStores();
@@ -435,10 +436,8 @@ namespace Nop.Web.Areas.Admin.Controllers
             {
                 if (importxmlfile != null && importxmlfile.Length > 0)
                 {
-                    using (var sr = new StreamReader(importxmlfile.OpenReadStream(), Encoding.UTF8))
-                    {
-                        _localizationService.ImportResourcesFromXml(language, sr);
-                    }
+                    using var sr = new StreamReader(importxmlfile.OpenReadStream(), Encoding.UTF8);
+                    _localizationService.ImportResourcesFromXml(language, sr);
                 }
                 else
                 {

@@ -19,7 +19,6 @@ using Nop.Services.Vendors;
 using Nop.Web.Factories;
 using Nop.Web.Framework.Controllers;
 using Nop.Web.Framework.Mvc.Filters;
-using Nop.Web.Framework.Security;
 using Nop.Web.Models.Vendors;
 
 namespace Nop.Web.Controllers
@@ -101,7 +100,7 @@ namespace Nop.Web.Controllers
             var attributes = _vendorAttributeService.GetAllVendorAttributes();
             foreach (var attribute in attributes)
             {
-                var controlId = $"vendor_attribute_{attribute.Id}";
+                var controlId = $"{NopVendorDefaults.VendorAttributePrefix}{attribute.Id}";
                 switch (attribute.AttributeControlType)
                 {
                     case AttributeControlType.DropdownList:
@@ -176,7 +175,7 @@ namespace Nop.Web.Controllers
 
         #region Methods
 
-        [HttpsRequirement(SslRequirement.Yes)]
+        [HttpsRequirement]
         public virtual IActionResult ApplyVendor()
         {
             if (!_vendorSettings.AllowCustomersToApplyForVendorAccount)
@@ -200,6 +199,9 @@ namespace Nop.Web.Controllers
 
             if (!_customerService.IsRegistered(_workContext.CurrentCustomer))
                 return Challenge();
+
+            if (_customerService.IsAdmin(_workContext.CurrentCustomer))
+                ModelState.AddModelError("", _localizationService.GetResource("Vendors.ApplyAccount.IsAdmin"));
 
             //validate CAPTCHA
             if (_captchaSettings.Enabled && _captchaSettings.ShowOnApplyVendorPage && !captchaValid)
@@ -277,7 +279,7 @@ namespace Nop.Web.Controllers
             return View(model);
         }
 
-        [HttpsRequirement(SslRequirement.Yes)]
+        [HttpsRequirement]
         public virtual IActionResult Info()
         {
             if (!_customerService.IsRegistered(_workContext.CurrentCustomer))

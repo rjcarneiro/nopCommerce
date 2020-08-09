@@ -106,7 +106,7 @@
                             dataDictRental.TemplateInfo.HtmlFieldPrefix = $"rental_{Model.Id}";
                             @await Html.PartialAsync("_RentalInfo", Model, dataDictRental)
                         }
-                        <!--price & add to cart-->
+                        <!--price & add to cart & estimate shipping-->
                         @{
                             var dataDictPrice = new ViewDataDictionary(ViewData);
                             dataDictPrice.TemplateInfo.HtmlFieldPrefix = $"price_{Model.Id}";
@@ -117,6 +117,8 @@
                             var dataDictAddToCart = new ViewDataDictionary(ViewData);
                             dataDictAddToCart.TemplateInfo.HtmlFieldPrefix = $"addtocart_{Model.Id}";
                             @await Html.PartialAsync("_AddToCart", Model.AddToCart, dataDictAddToCart)
+
+                            @await Html.PartialAsync("_ProductEstimateShipping", Model.ProductEstimateShipping)
                         }
                         <!--wishlist, compare, email a friend-->
                         <div class="overview-buttons">

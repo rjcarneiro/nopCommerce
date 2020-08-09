@@ -75,7 +75,6 @@ namespace Nop.Web.Areas.Admin.Factories
             _baseAdminModelFactory.PrepareReturnRequestStatuses(searchModel.ReturnRequestStatusList, false);
 
             //for some reason, the standard default value (0) for the "All" item is already used for the "Pending" status, so here we use -1
-            //TODO: move away from using 0 in ReturnRequestStatus enum
             searchModel.ReturnRequestStatusId = -1;
             searchModel.ReturnRequestStatusList.Insert(0, new SelectListItem
             {
@@ -164,7 +163,7 @@ namespace Nop.Web.Areas.Admin.Factories
                 return model;
 
             //fill in model values from the entity
-            model = model ?? new ReturnRequestModel
+            model ??= new ReturnRequestModel
             {
                 Id = returnRequest.Id,
                 CustomNumber = returnRequest.CustomNumber,
@@ -257,7 +256,7 @@ namespace Nop.Web.Areas.Admin.Factories
             if (returnRequestReason != null)
             {
                 //fill in model values from the entity
-                model = model ?? returnRequestReason.ToModel<ReturnRequestReasonModel>();
+                model ??= returnRequestReason.ToModel<ReturnRequestReasonModel>();
 
                 //define localized model configuration action
                 localizedModelConfiguration = (locale, languageId) =>
@@ -326,7 +325,7 @@ namespace Nop.Web.Areas.Admin.Factories
             if (returnRequestAction != null)
             {
                 //fill in model values from the entity
-                model = model ?? returnRequestAction.ToModel<ReturnRequestActionModel>();
+                model ??= returnRequestAction.ToModel<ReturnRequestActionModel>();
 
                 //define localized model configuration action
                 localizedModelConfiguration = (locale, languageId) =>

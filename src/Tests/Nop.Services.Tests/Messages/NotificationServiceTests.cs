@@ -7,7 +7,6 @@ using Microsoft.AspNetCore.Mvc.ViewFeatures;
 using Moq;
 using Newtonsoft.Json;
 using Nop.Core;
-using Nop.Services.Defaults;
 using Nop.Services.Logging;
 using Nop.Services.Messages;
 using NUnit.Framework;
@@ -48,13 +47,8 @@ namespace Nop.Services.Tests.Messages
                 workContext: _workContext.Object);
         }
 
-        private IList<NotifyData> DeserializedDataDictionary
-        {
-            get
-            {
-                return JsonConvert.DeserializeObject<IList<NotifyData>>(_dataDictionary[NopMessageDefaults.NotificationListKey].ToString());
-            }
-        }
+        private IList<NotifyData> DeserializedDataDictionary => 
+            JsonConvert.DeserializeObject<IList<NotifyData>>(_dataDictionary[NopMessageDefaults.NotificationListKey].ToString());
 
         [Test]
         public void Can_add_notification()

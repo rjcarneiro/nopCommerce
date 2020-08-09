@@ -97,7 +97,7 @@ namespace Nop.Web.Factories
                 //set already selected attributes
                 var selectedAddressAttributes = !string.IsNullOrEmpty(overrideAttributesXml) ?
                     overrideAttributesXml :
-                    (address != null ? address.CustomAttributes : null);
+                    address?.CustomAttributes;
                 switch (attribute.AttributeControlType)
                 {
                     case AttributeControlType.DropdownList:
@@ -211,9 +211,6 @@ namespace Nop.Web.Factories
                 model.ZipPostalCode = _genericAttributeService.GetAttribute<string>(customer, NopCustomerDefaults.ZipPostalCodeAttribute);
                 model.City = _genericAttributeService.GetAttribute<string>(customer, NopCustomerDefaults.CityAttribute);
                 model.County = _genericAttributeService.GetAttribute<string>(customer, NopCustomerDefaults.CountyAttribute);
-                //TODO: ignore country and state for prepopulation. it can cause some issues when posting pack with errors, etc
-                //model.CountryId = _genericAttributeService.GetAttribute<int>(SystemCustomerAttributeNames.CountryId);
-                //model.StateProvinceId = _genericAttributeService.GetAttribute<int>(SystemCustomerAttributeNames.StateProvinceId);
                 model.PhoneNumber = _genericAttributeService.GetAttribute<string>(customer, NopCustomerDefaults.PhoneAttribute);
                 model.FaxNumber = _genericAttributeService.GetAttribute<string>(customer, NopCustomerDefaults.FaxAttribute);
             }
@@ -246,7 +243,7 @@ namespace Nop.Web.Factories
                 {
                     var languageId = EngineContext.Current.Resolve<IWorkContext>().WorkingLanguage.Id;
                     var states = _stateProvinceService
-                        .GetStateProvincesByCountryId(model.CountryId.HasValue ? model.CountryId.Value : 0, languageId)
+                        .GetStateProvincesByCountryId(model.CountryId ?? 0, languageId)
                         .ToList();
                     if (states.Any())
                     {
@@ -267,7 +264,7 @@ namespace Nop.Web.Factories
                         var anyCountrySelected = model.AvailableCountries.Any(x => x.Selected);
                         model.AvailableStates.Add(new SelectListItem
                         {
-                            Text = _localizationService.GetResource(anyCountrySelected ? "Address.OtherNonUS" : "Address.SelectState"),
+                            Text = _localizationService.GetResource(anyCountrySelected ? "Address.Other" : "Address.SelectState"),
                             Value = "0"
                         });
                     }

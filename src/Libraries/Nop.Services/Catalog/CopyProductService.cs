@@ -1,7 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
-using Nop.Core.Caching;
 using Nop.Core.Domain.Catalog;
 using Nop.Core.Domain.Discounts;
 using Nop.Core.Domain.Media;
@@ -9,7 +8,6 @@ using Nop.Services.Localization;
 using Nop.Services.Media;
 using Nop.Services.Seo;
 using Nop.Services.Stores;
-using NopCatalogDefaults = Nop.Services.Defaults.NopCatalogDefaults;
 
 namespace Nop.Services.Catalog
 {
@@ -108,7 +106,7 @@ namespace Nop.Services.Catalog
                     string.Format(NopCatalogDefaults.ProductCopyNameTemplate, associatedProduct.Name),
                     isPublished, copyImages, false);
                 associatedProductCopy.ParentGroupedProductId = productCopy.Id;
-                _productService.UpdateProduct(productCopy);
+                _productService.UpdateProduct(associatedProductCopy);
             }
         }
 
@@ -440,7 +438,7 @@ namespace Nop.Services.Catalog
         /// <param name="productCopy">New product</param>
         protected virtual void CopyCategoriesMapping(Product product, Product productCopy)
         {
-            foreach (var productCategory in _categoryService.GetProductCategoriesByProductId(product.Id))
+            foreach (var productCategory in _categoryService.GetProductCategoriesByProductId(product.Id, showHidden: true))
             {
                 var productCategoryCopy = new ProductCategory
                 {

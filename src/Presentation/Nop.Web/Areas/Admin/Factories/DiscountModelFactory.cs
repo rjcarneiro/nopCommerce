@@ -4,13 +4,11 @@ using System.Linq;
 using Microsoft.AspNetCore.Mvc.Rendering;
 using Microsoft.AspNetCore.WebUtilities;
 using Nop.Core;
-using Nop.Core.Caching;
 using Nop.Core.Domain.Catalog;
 using Nop.Core.Domain.Directory;
 using Nop.Core.Domain.Discounts;
 using Nop.Services;
 using Nop.Services.Catalog;
-using Nop.Services.Defaults;
 using Nop.Services.Directory;
 using Nop.Services.Discounts;
 using Nop.Services.Helpers;
@@ -256,7 +254,7 @@ namespace Nop.Web.Areas.Admin.Factories
             if (discount != null)
             {
                 //fill in model values from the entity
-                model = model ?? discount.ToModel<DiscountModel>();
+                model ??= discount.ToModel<DiscountModel>();
 
                 //prepare available discount requirement rules
                 var discountRules = _discountPluginManager.LoadAllPlugins();

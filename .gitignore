@@ -104,6 +104,9 @@ publish/
 *.Publish.xml
 *.pubxml
 
+#Launch settings
+**/Properties/launchSettings.json
+
 # NuGet Packages Directory
 ## TODO: If you have NuGet Package Restore enabled, uncomment the next line
 #packages/
@@ -165,6 +168,7 @@ $RECYCLE.BIN/
 glob:*.user
 *.patch
 *.hg
+src/Presentation/Nop.Web/.config/*
 src/Presentation/Nop.Web/App_Data/browscap.crawlersonly.xml
 src/Presentation/Nop.Web/App_Data/installedPlugins.json
 src/Presentation/Nop.Web/App_Data/plugins.json

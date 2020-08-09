@@ -8,6 +8,7 @@ using Nop.Core.Domain.Common;
 using Nop.Core.Domain.Localization;
 using Nop.Data;
 using Nop.Services.Catalog;
+using Nop.Tests;
 using NUnit.Framework;
 
 namespace Nop.Services.Tests.Catalog
@@ -66,7 +67,7 @@ namespace Nop.Services.Tests.Catalog
             _productWarehouseInventoryRepository = new Mock<IRepository<ProductWarehouseInventory>>();
             _productWarehouseInventoryRepository.Setup(x => x.Table).Returns(GetMockProductWarehouseInventoryRecords);
 
-            _productService = new ProductService(new CatalogSettings(), new CommonSettings(), null, null,
+            _productService = new ProductService(new CatalogSettings(), new CommonSettings(), null, new FakeCacheKeyService(),  null,
                 null, null, null, null, null, null, null, null, null, null, _productRepository.Object, null, null, null, null, null, null, _productWarehouseInventoryRepository.Object, null, null, null, null, null, null,
                 null, null, null, null, new LocalizationSettings());
         }
@@ -252,6 +253,30 @@ namespace Nop.Services.Tests.Catalog
             };
 
             _productService.ProductIsAvailable(product, new DateTime(2010, 01, 03)).Should().BeFalse();
+        }
+
+        [Test]
+        public void Should_be_available_when_current_date_is_in_range()
+        {
+            var product = new Product
+            {
+                AvailableStartDateTimeUtc = DateTime.UtcNow.AddDays(-1),
+                AvailableEndDateTimeUtc = DateTime.UtcNow.AddDays(1)
+            };
+
+            _productService.ProductIsAvailable(product).Should().BeTrue();
+        }
+
+        [Test]
+        public void Should_not_be_available_when_current_date_is_not_in_range()
+        {
+            var product = new Product
+            {
+                AvailableStartDateTimeUtc = DateTime.UtcNow.AddDays(-2),
+                AvailableEndDateTimeUtc = DateTime.UtcNow.AddDays(-1)
+            };
+
+            _productService.ProductIsAvailable(product).Should().BeFalse();
         }
 
         [Test]

@@ -282,7 +282,7 @@ namespace Nop.Web.Areas.Admin.Factories
             if (shippingMethod != null)
             {
                 //fill in model values from the entity
-                model = model ?? shippingMethod.ToModel<ShippingMethodModel>();
+                model ??= shippingMethod.ToModel<ShippingMethodModel>();
 
                 //define localized model configuration action
                 localizedModelConfiguration = (locale, languageId) =>
@@ -353,7 +353,7 @@ namespace Nop.Web.Areas.Admin.Factories
             if (deliveryDate != null)
             {
                 //fill in model values from the entity
-                model = model ?? deliveryDate.ToModel<DeliveryDateModel>();
+                model ??= deliveryDate.ToModel<DeliveryDateModel>();
 
                 //define localized model configuration action
                 localizedModelConfiguration = (locale, languageId) =>
@@ -407,7 +407,7 @@ namespace Nop.Web.Areas.Admin.Factories
             if (productAvailabilityRange != null)
             {
                 //fill in model values from the entity
-                model = model ?? productAvailabilityRange.ToModel<ProductAvailabilityRangeModel>();
+                model ??= productAvailabilityRange.ToModel<ProductAvailabilityRangeModel>();
 
                 //define localized model configuration action
                 localizedModelConfiguration = (locale, languageId) =>
@@ -450,7 +450,9 @@ namespace Nop.Web.Areas.Admin.Factories
                 throw new ArgumentNullException(nameof(searchModel));
 
             //get warehouses
-            var warehouses = _shippingService.GetAllWarehouses().ToPagedList(searchModel);
+            var warehouses = _shippingService.GetAllWarehouses(
+                name : searchModel.SearchName)
+                .ToPagedList(searchModel);
 
             //prepare list model
             var model = new WarehouseListModel().PrepareToGrid(searchModel, warehouses, () =>

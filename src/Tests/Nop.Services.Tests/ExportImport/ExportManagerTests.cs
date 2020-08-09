@@ -147,12 +147,14 @@ namespace Nop.Services.Tests.ExportImport
             _authenticationService.Setup(p => p.GetAuthenticatedCustomer()).Returns(GetTestCustomer());
             _pictureService.Setup(p => p.GetPictureById(1)).Returns(picture);
             _pictureService.Setup(p => p.GetThumbLocalPath(picture, 0, true)).Returns(@"c:\temp\picture.png");
-            _pictureService.Setup(p => p.GetPicturesByProductId(1, 3)).Returns(new List<Picture> { picture });
+            _pictureService.Setup(p => p.GetPicturesByProductId(1, 1)).Returns(new List<Picture> { picture });
+            _pictureService.Setup(p => p.GetPicturesByProductId(1, 2)).Returns(new List<Picture> { picture, picture });
+            _pictureService.Setup(p => p.GetPicturesByProductId(1, 3)).Returns(new List<Picture> { });
             _productTemplateService.Setup(p => p.GetAllProductTemplates()).Returns(new List<ProductTemplate> { new ProductTemplate { Id = 1 } });
             _dateRangeService.Setup(d => d.GetAllDeliveryDates()).Returns(new List<DeliveryDate> { new DeliveryDate { Id = 1 } });
             _dateRangeService.Setup(d => d.GetAllProductAvailabilityRanges()).Returns(new List<ProductAvailabilityRange> { new ProductAvailabilityRange { Id = 1 } });
             _taxCategoryService.Setup(t => t.GetAllTaxCategories()).Returns(new List<TaxCategory> { new TaxCategory() });
-            _vendorService.Setup(v => v.GetAllVendors(string.Empty, 0, int.MaxValue, true)).Returns(new PagedList<Vendor>(new List<Vendor> { new Vendor { Id = 1 } }, 0, 10));
+            _vendorService.Setup(v => v.GetAllVendors(string.Empty, string.Empty, 0, int.MaxValue, true)).Returns(new PagedList<Vendor>(new List<Vendor> { new Vendor { Id = 1 } }, 0, 10));
             _measureService.Setup(m => m.GetAllMeasureWeights()).Returns(new List<MeasureWeight> { new MeasureWeight() });
             _categoryService.Setup(c => c.GetProductCategoriesByProductId(1, true)).Returns(new List<ProductCategory>());
             _manufacturerService.Setup(m => m.GetProductManufacturersByProductId(1, true)).Returns(new List<ProductManufacturer>());
@@ -230,7 +232,7 @@ namespace Nop.Services.Tests.ExportImport
                     continue;
 
                 var objectPropertyValue = objectProperty.GetValue(actual);
-                objectPropertyValue = objectPropertyValue ?? string.Empty;
+                objectPropertyValue ??= string.Empty;
 
                 if (objectProperty.PropertyType == typeof(Guid))
                 {

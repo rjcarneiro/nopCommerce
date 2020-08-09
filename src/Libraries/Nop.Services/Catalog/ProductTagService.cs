@@ -5,7 +5,7 @@ using Nop.Core;
 using Nop.Core.Caching;
 using Nop.Core.Domain.Catalog;
 using Nop.Data;
-using Nop.Services.Caching.CachingDefaults;
+using Nop.Services.Caching;
 using Nop.Services.Caching.Extensions;
 using Nop.Services.Customers;
 using Nop.Services.Events;
@@ -21,8 +21,9 @@ namespace Nop.Services.Catalog
         #region Fields
 
         private readonly CatalogSettings _catalogSettings;
+        private readonly ICacheKeyService _cacheKeyService;
         private readonly ICustomerService _customerService;
-        private readonly IDataProvider _dataProvider;
+        private readonly INopDataProvider _dataProvider;
         private readonly IEventPublisher _eventPublisher;
         private readonly IRepository<ProductProductTagMapping> _productProductTagMappingRepository;
         private readonly IRepository<ProductTag> _productTagRepository;
@@ -35,8 +36,9 @@ namespace Nop.Services.Catalog
         #region Ctor
 
         public ProductTagService(CatalogSettings catalogSettings,
+            ICacheKeyService cacheKeyService,
             ICustomerService customerService,
-            IDataProvider dataProvider,
+            INopDataProvider dataProvider,
             IEventPublisher eventPublisher,
             IRepository<ProductProductTagMapping> productProductTagMappingRepository,
             IRepository<ProductTag> productTagRepository,
@@ -45,6 +47,7 @@ namespace Nop.Services.Catalog
             IWorkContext workContext)
         {
             _catalogSettings = catalogSettings;
+            _cacheKeyService = cacheKeyService;
             _customerService = customerService;
             _dataProvider = dataProvider;
             _eventPublisher = eventPublisher;
@@ -93,7 +96,9 @@ namespace Nop.Services.Catalog
                 allowedCustomerRolesIds = string.Join(",", _customerService.GetCustomerRoleIds(_workContext.CurrentCustomer));
             }
 
-            var key = NopCatalogCachingDefaults.ProductTagCountCacheKey.ToCacheKey(storeId, _customerService.GetCustomerRoleIds(_workContext.CurrentCustomer), showHidden);
+            var key = _cacheKeyService.PrepareKeyForDefaultCache(NopCatalogDefaults.ProductTagCountCacheKey, storeId, 
+                _customerService.GetCustomerRoleIds(_workContext.CurrentCustomer), 
+                showHidden);
            
             return _staticCacheManager.Get(key, () =>
             {
@@ -146,13 +151,20 @@ namespace Nop.Services.Catalog
         /// <summary>
         /// Gets all product tags
         /// </summary>
+        /// <param name="tagName">Tag name</param>
         /// <returns>Product tags</returns>
-        public virtual IList<ProductTag> GetAllProductTags()
+        public virtual IList<ProductTag> GetAllProductTags(string tagName = null)
         {
             var query = _productTagRepository.Table;
-            var productTags = query.ToCachedList(NopCatalogCachingDefaults.ProductTagAllCacheKey);
+            
+            var allProductTags = query.ToCachedList(_cacheKeyService.PrepareKeyForDefaultCache(NopCatalogDefaults.ProductTagAllCacheKey));
 
-            return productTags;
+            if(!string.IsNullOrEmpty(tagName))
+            {
+                allProductTags = allProductTags.Where(tag => tag.Name.Contains(tagName)).ToList();
+            }
+            
+            return allProductTags;
         }
 
         /// <summary>
@@ -162,7 +174,7 @@ namespace Nop.Services.Catalog
         /// <returns>Product tags</returns>
         public virtual IList<ProductTag> GetAllProductTagsByProductId(int productId)
         {
-            var key = NopCatalogCachingDefaults.ProductTagAllByProductIdCacheKey.ToCacheKey(productId);
+            var key = _cacheKeyService.PrepareKeyForDefaultCache(NopCatalogDefaults.ProductTagAllByProductIdCacheKey, productId);
 
             var query = from pt in _productTagRepository.Table
                 join ppt in _productProductTagMappingRepository.Table on pt.Id equals ppt.ProductTagId
@@ -231,6 +243,7 @@ namespace Nop.Services.Catalog
 
             _productProductTagMappingRepository.Insert(tagMapping);
 
+            //event notification
             _eventPublisher.EntityInserted(tagMapping);
         }
 
@@ -361,7 +374,29 @@ namespace Nop.Services.Catalog
             }
 
             //cache
-            _staticCacheManager.RemoveByPrefix(NopCatalogCachingDefaults.ProductTagPrefixCacheKey);
+            _staticCacheManager.RemoveByPrefix(NopCatalogDefaults.ProductTagPrefixCacheKey);
+        }
+
+        #endregion
+
+        #region MyRegion
+
+        protected partial class ProductTagWithCount
+        {
+            /// <summary>
+            /// Gets or sets the entity identifier
+            /// </summary>
+            public int Id { get; set; }
+
+            /// <summary>
+            /// Gets or sets the product tag ID
+            /// </summary>
+            public int ProductTagId { get; set; }
+
+            /// <summary>
+            /// Gets or sets the count
+            /// </summary>
+            public int ProductCount { get; set; }
         }
 
         #endregion

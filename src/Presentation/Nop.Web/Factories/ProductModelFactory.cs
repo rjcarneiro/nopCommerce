@@ -12,7 +12,9 @@ using Nop.Core.Domain.Media;
 using Nop.Core.Domain.Orders;
 using Nop.Core.Domain.Security;
 using Nop.Core.Domain.Seo;
+using Nop.Core.Domain.Shipping;
 using Nop.Core.Domain.Vendors;
+using Nop.Services.Caching;
 using Nop.Services.Catalog;
 using Nop.Services.Common;
 using Nop.Services.Customers;
@@ -42,6 +44,7 @@ namespace Nop.Web.Factories
         private readonly CaptchaSettings _captchaSettings;
         private readonly CatalogSettings _catalogSettings;
         private readonly CustomerSettings _customerSettings;
+        private readonly ICacheKeyService _cacheKeyService;
         private readonly ICategoryService _categoryService;
         private readonly ICurrencyService _currencyService;
         private readonly ICustomerService _customerService;
@@ -62,8 +65,9 @@ namespace Nop.Web.Factories
         private readonly IProductTemplateService _productTemplateService;
         private readonly IReviewTypeService _reviewTypeService;
         private readonly ISpecificationAttributeService _specificationAttributeService;
-        private readonly IStaticCacheManager _cacheManager;
+        private readonly IStaticCacheManager _staticCacheManager;
         private readonly IStoreContext _storeContext;
+        private readonly IShoppingCartModelFactory _shoppingCartModelFactory;
         private readonly ITaxService _taxService;
         private readonly IUrlRecordService _urlRecordService;
         private readonly IVendorService _vendorService;
@@ -72,6 +76,7 @@ namespace Nop.Web.Factories
         private readonly MediaSettings _mediaSettings;
         private readonly OrderSettings _orderSettings;
         private readonly SeoSettings _seoSettings;
+        private readonly ShippingSettings _shippingSettings;
         private readonly VendorSettings _vendorSettings;
 
         #endregion
@@ -81,6 +86,7 @@ namespace Nop.Web.Factories
         public ProductModelFactory(CaptchaSettings captchaSettings,
             CatalogSettings catalogSettings,
             CustomerSettings customerSettings,
+            ICacheKeyService cacheKeyService,
             ICategoryService categoryService,
             ICurrencyService currencyService,
             ICustomerService customerService,
@@ -101,8 +107,9 @@ namespace Nop.Web.Factories
             IProductTemplateService productTemplateService,
             IReviewTypeService reviewTypeService,
             ISpecificationAttributeService specificationAttributeService,
-            IStaticCacheManager cacheManager,
+            IStaticCacheManager staticCacheManager,
             IStoreContext storeContext,
+            IShoppingCartModelFactory shoppingCartModelFactory,
             ITaxService taxService,
             IUrlRecordService urlRecordService,
             IVendorService vendorService,
@@ -111,11 +118,13 @@ namespace Nop.Web.Factories
             MediaSettings mediaSettings,
             OrderSettings orderSettings,
             SeoSettings seoSettings,
+            ShippingSettings shippingSettings,
             VendorSettings vendorSettings)
         {
             _captchaSettings = captchaSettings;
             _catalogSettings = catalogSettings;
             _customerSettings = customerSettings;
+            _cacheKeyService = cacheKeyService;
             _categoryService = categoryService;
             _currencyService = currencyService;
             _customerService = customerService;
@@ -136,8 +145,9 @@ namespace Nop.Web.Factories
             _productTemplateService = productTemplateService;
             _reviewTypeService = reviewTypeService;
             _specificationAttributeService = specificationAttributeService;
-            _cacheManager = cacheManager;
+            _staticCacheManager = staticCacheManager;
             _storeContext = storeContext;
+            _shoppingCartModelFactory = shoppingCartModelFactory;
             _taxService = taxService;
             _urlRecordService = urlRecordService;
             _vendorService = vendorService;
@@ -146,6 +156,7 @@ namespace Nop.Web.Factories
             _mediaSettings = mediaSettings;
             _orderSettings = orderSettings;
             _seoSettings = seoSettings;
+            _shippingSettings = shippingSettings;
             _vendorSettings = vendorSettings;
         }
 
@@ -164,9 +175,9 @@ namespace Nop.Web.Factories
 
             if (_catalogSettings.ShowProductReviewsPerStore)
             {
-                var cacheKey = string.Format(NopModelCacheDefaults.ProductReviewsModelKey, product.Id, _storeContext.CurrentStore.Id);
+                var cacheKey = _cacheKeyService.PrepareKeyForDefaultCache(NopModelCacheDefaults.ProductReviewsModelKey, product, _storeContext.CurrentStore);
 
-                productReview = _cacheManager.Get(cacheKey, () =>
+                productReview = _staticCacheManager.Get(cacheKey, () =>
                 {
                     var productReviews = _productService.GetAllProductReviews(productId: product.Id, approved: true, storeId: _storeContext.CurrentStore.Id);
                     
@@ -440,17 +451,17 @@ namespace Nop.Web.Factories
             var pictureSize = productThumbPictureSize ?? _mediaSettings.ProductThumbPictureSize;
 
             //prepare picture model
-            var cacheKey = string.Format(NopModelCacheDefaults.ProductDefaultPictureModelKey,
-                product.Id, pictureSize, true, _workContext.WorkingLanguage.Id, _webHelper.IsCurrentConnectionSecured(),
-                _storeContext.CurrentStore.Id);
+            var cacheKey = _cacheKeyService.PrepareKeyForDefaultCache(NopModelCacheDefaults.ProductDefaultPictureModelKey, 
+                product, pictureSize, true, _workContext.WorkingLanguage, _webHelper.IsCurrentConnectionSecured(),
+                _storeContext.CurrentStore);
 
-            var defaultPictureModel = _cacheManager.Get(cacheKey, () =>
+            var defaultPictureModel = _staticCacheManager.Get(cacheKey, () =>
             {
                 var picture = _pictureService.GetPicturesByProductId(product.Id, 1).FirstOrDefault();
                 var pictureModel = new PictureModel
                 {
-                    ImageUrl = _pictureService.GetPictureUrl(picture, pictureSize),
-                    FullSizeImageUrl = _pictureService.GetPictureUrl(picture),
+                    ImageUrl = _pictureService.GetPictureUrl(ref picture, pictureSize),
+                    FullSizeImageUrl = _pictureService.GetPictureUrl(ref picture),
                     //"title" attribute
                     Title = (picture != null && !string.IsNullOrEmpty(picture.TitleAttribute))
                         ? picture.TitleAttribute
@@ -781,11 +792,11 @@ namespace Nop.Web.Factories
                         //"image square" picture (with with "image squares" attribute type only)
                         if (attributeValue.ImageSquaresPictureId > 0)
                         {
-                            var productAttributeImageSquarePictureCacheKey = string.Format(NopModelCacheDefaults.ProductAttributeImageSquarePictureModelKey,
-                                   attributeValue.ImageSquaresPictureId,
-                                   _webHelper.IsCurrentConnectionSecured(),
-                                   _storeContext.CurrentStore.Id);
-                            valueModel.ImageSquaresPictureModel = _cacheManager.Get(productAttributeImageSquarePictureCacheKey, () =>
+                            var productAttributeImageSquarePictureCacheKey = _cacheKeyService.PrepareKeyForDefaultCache(NopModelCacheDefaults.ProductAttributeImageSquarePictureModelKey
+                                , attributeValue.ImageSquaresPictureId,
+                                    _webHelper.IsCurrentConnectionSecured(),
+                                    _storeContext.CurrentStore);
+                            valueModel.ImageSquaresPictureModel = _staticCacheManager.Get(productAttributeImageSquarePictureCacheKey, () =>
                             {
                                 var imageSquaresPicture = _pictureService.GetPictureById(attributeValue.ImageSquaresPictureId);
 
@@ -793,8 +804,8 @@ namespace Nop.Web.Factories
                                 {
                                     return new PictureModel
                                     {
-                                        FullSizeImageUrl = _pictureService.GetPictureUrl(imageSquaresPicture),
-                                        ImageUrl = _pictureService.GetPictureUrl(imageSquaresPicture, _mediaSettings.ImageSquarePictureSize)
+                                        FullSizeImageUrl = _pictureService.GetPictureUrl(ref imageSquaresPicture),
+                                        ImageUrl = _pictureService.GetPictureUrl(ref imageSquaresPicture, _mediaSettings.ImageSquarePictureSize)
                                     };
                                 }
 
@@ -985,8 +996,10 @@ namespace Nop.Web.Factories
                 _mediaSettings.ProductDetailsPictureSize;
 
             //prepare picture models
-            var productPicturesCacheKey = string.Format(NopModelCacheDefaults.ProductDetailsPicturesModelKey, product.Id, defaultPictureSize, isAssociatedProduct, _workContext.WorkingLanguage.Id, _webHelper.IsCurrentConnectionSecured(), _storeContext.CurrentStore.Id);
-            var cachedPictures = _cacheManager.Get(productPicturesCacheKey, () =>
+            var productPicturesCacheKey = _cacheKeyService.PrepareKeyForDefaultCache(NopModelCacheDefaults.ProductDetailsPicturesModelKey
+                , product, defaultPictureSize, isAssociatedProduct, 
+                _workContext.WorkingLanguage, _webHelper.IsCurrentConnectionSecured(), _storeContext.CurrentStore);
+            var cachedPictures = _staticCacheManager.Get(productPicturesCacheKey, () =>
             {
                 var productName = _localizationService.GetLocalized(product, x => x.Name);
 
@@ -994,8 +1007,8 @@ namespace Nop.Web.Factories
                 var defaultPicture = pictures.FirstOrDefault();
                 var defaultPictureModel = new PictureModel
                 {
-                    ImageUrl = _pictureService.GetPictureUrl(defaultPicture, defaultPictureSize, !isAssociatedProduct),
-                    FullSizeImageUrl = _pictureService.GetPictureUrl(defaultPicture, 0, !isAssociatedProduct)
+                    ImageUrl = _pictureService.GetPictureUrl(ref defaultPicture, defaultPictureSize, !isAssociatedProduct),
+                    FullSizeImageUrl = _pictureService.GetPictureUrl(ref defaultPicture, 0, !isAssociatedProduct)
                 };
                 //"title" attribute
                 defaultPictureModel.Title = (defaultPicture != null && !string.IsNullOrEmpty(defaultPicture.TitleAttribute)) ?
@@ -1008,13 +1021,14 @@ namespace Nop.Web.Factories
 
                 //all pictures
                 var pictureModels = new List<PictureModel>();
-                foreach (var picture in pictures)
+                for (var i = 0; i < pictures.Count(); i++ )
                 {
+                    var picture = pictures[i];
                     var pictureModel = new PictureModel
                     {
-                        ImageUrl = _pictureService.GetPictureUrl(picture, defaultPictureSize, !isAssociatedProduct),
-                        ThumbImageUrl = _pictureService.GetPictureUrl(picture, _mediaSettings.ProductThumbPictureSizeOnProductDetailsPage),
-                        FullSizeImageUrl = _pictureService.GetPictureUrl(picture),
+                        ImageUrl = _pictureService.GetPictureUrl(ref picture, defaultPictureSize, !isAssociatedProduct),
+                        ThumbImageUrl = _pictureService.GetPictureUrl(ref picture, _mediaSettings.ProductThumbPictureSizeOnProductDetailsPage),
+                        FullSizeImageUrl = _pictureService.GetPictureUrl(ref picture),
                         Title = string.Format(_localizationService.GetResource("Media.Product.ImageLinkTitleFormat.Details"), productName),
                         AlternateText = string.Format(_localizationService.GetResource("Media.Product.ImageAlternateTextFormat.Details"), productName),
                     };
@@ -1311,6 +1325,31 @@ namespace Nop.Web.Factories
                     model.RentalEndDate = updatecartitem.RentalEndDateUtc;
                 }
             }
+
+            //estimate shipping
+            if (_shippingSettings.EstimateShippingProductPageEnabled && !model.IsFreeShipping)
+            {
+                var wrappedProduct = new ShoppingCartItem()
+                {
+                    StoreId = _storeContext.CurrentStore.Id,
+                    ShoppingCartTypeId = (int)ShoppingCartType.ShoppingCart,
+                    CustomerId = _workContext.CurrentCustomer.Id,
+                    ProductId = product.Id,
+                    CreatedOnUtc = DateTime.UtcNow
+                };
+
+                var estimateShippingModel = _shoppingCartModelFactory.PrepareEstimateShippingModel(new[] { wrappedProduct });
+
+                model.ProductEstimateShipping.ProductId = product.Id;
+                model.ProductEstimateShipping.Enabled = estimateShippingModel.Enabled;
+                model.ProductEstimateShipping.CountryId = estimateShippingModel.CountryId;
+                model.ProductEstimateShipping.StateProvinceId = estimateShippingModel.StateProvinceId;
+                model.ProductEstimateShipping.ZipPostalCode = estimateShippingModel.ZipPostalCode;
+                model.ProductEstimateShipping.AvailableCountries = estimateShippingModel.AvailableCountries;
+                model.ProductEstimateShipping.AvailableStates = estimateShippingModel.AvailableStates;
+            }
+            else
+                model.ProductEstimateShipping.Enabled = false;
 
             //associated products
             if (product.ProductType == ProductType.GroupedProduct)

@@ -6,12 +6,11 @@ using Nop.Core.Infrastructure;
 using Nop.Web.Framework;
 using Nop.Web.Framework.Controllers;
 using Nop.Web.Framework.Mvc.Filters;
-using Nop.Web.Framework.Security;
 
 namespace Nop.Web.Areas.Admin.Controllers
 {
     [Area(AreaNames.Admin)]
-    [HttpsRequirement(SslRequirement.Yes)]
+    [HttpsRequirement]
     [AutoValidateAntiforgeryToken]
     [ValidateIpAddress]
     [AuthorizeAdmin]
@@ -28,7 +27,7 @@ namespace Nop.Web.Areas.Admin.Controllers
         {
             //use IsoDateFormat on writing JSON text to fix issue with dates in grid
             var useIsoDateFormat = EngineContext.Current.Resolve<AdminAreaSettings>()?.UseIsoDateFormatInJsonResult ?? false;
-            var serializerSettings = EngineContext.Current.Resolve<IOptions<MvcJsonOptions>>()?.Value?.SerializerSettings
+            var serializerSettings = EngineContext.Current.Resolve<IOptions<MvcNewtonsoftJsonOptions>>()?.Value?.SerializerSettings
                 ?? new JsonSerializerSettings();
 
             if (!useIsoDateFormat)

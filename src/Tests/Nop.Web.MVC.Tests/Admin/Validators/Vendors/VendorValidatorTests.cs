@@ -11,14 +11,14 @@ namespace Nop.Web.MVC.Tests.Admin.Validators.Vendors
     [TestFixture]
     public class VendorValidatorTests : BaseValidatorTests
     {
-        private Mock<IDataProvider> _dataProvider;
+        private Mock<INopDataProvider> _dataProvider;
         private VendorValidator _validator;
 
         [SetUp]
         public new void Setup()
         {
-            _dataProvider = new Mock<IDataProvider>();
-            _validator = new VendorValidator(_dataProvider.Object, _localizationService);
+            _dataProvider = new Mock<INopDataProvider>();
+            _validator = new VendorValidator(_localizationService, _dataProvider.Object);
         }
 
         [Test]

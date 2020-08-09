@@ -23,14 +23,12 @@ namespace Nop.Services.Tests
         [SetUp]
         public virtual void SetUp()
         {
-
+           
         }
 
         public void RunWithTestServiceProvider(Action action)
         {
-            var nopEngine = new Mock<NopEngine>();
-            nopEngine.Setup(x => x.ServiceProvider).Returns(new TestServiceProvider());
-            EngineContext.Replace(nopEngine.Object);
+            EngineContext.Replace(new FakeNopEngine());
 
             action();
 
@@ -45,10 +43,10 @@ namespace Nop.Services.Tests
 
         private void InitPlugins()
         {
-            var hostingEnvironment = new Mock<IHostingEnvironment>();
-            hostingEnvironment.Setup(x => x.ContentRootPath).Returns(System.Reflection.Assembly.GetExecutingAssembly().Location);
-            hostingEnvironment.Setup(x => x.WebRootPath).Returns(System.IO.Directory.GetCurrentDirectory());
-            CommonHelper.DefaultFileProvider = new NopFileProvider(hostingEnvironment.Object);
+            var webHostEnvironment = new Mock<IWebHostEnvironment>();
+            webHostEnvironment.Setup(x => x.ContentRootPath).Returns(System.Reflection.Assembly.GetExecutingAssembly().Location);
+            webHostEnvironment.Setup(x => x.WebRootPath).Returns(System.IO.Directory.GetCurrentDirectory());
+            CommonHelper.DefaultFileProvider = new NopFileProvider(webHostEnvironment.Object);
 
             Singleton<IPluginsInfo>.Instance = new PluginsInfo(CommonHelper.DefaultFileProvider)
             {
@@ -91,6 +89,16 @@ namespace Nop.Services.Tests
                     }
                 }
             };
+        }
+        
+        public class FakeNopEngine : NopEngine
+        {
+            public FakeNopEngine(IServiceProvider serviceProvider = null)
+            {
+                ServiceProvider = serviceProvider ?? new TestServiceProvider();
+            }
+
+            public override IServiceProvider ServiceProvider { get; }
         }
     }
 }

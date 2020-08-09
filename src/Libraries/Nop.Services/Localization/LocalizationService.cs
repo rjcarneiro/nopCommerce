@@ -1,24 +1,20 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Data.SqlTypes;
 using System.IO;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
 using System.Text;
 using System.Xml;
-using LinqToDB;
-using LinqToDB.Data;
 using Nop.Core;
 using Nop.Core.Caching;
 using Nop.Core.Configuration;
 using Nop.Core.Domain.Localization;
 using Nop.Core.Domain.Security;
 using Nop.Data;
-using Nop.Services.Caching.CachingDefaults;
+using Nop.Services.Caching;
 using Nop.Services.Caching.Extensions;
 using Nop.Services.Configuration;
-using Nop.Services.Defaults;
 using Nop.Services.Events;
 using Nop.Services.Logging;
 using Nop.Services.Plugins;
@@ -32,14 +28,14 @@ namespace Nop.Services.Localization
     {
         #region Fields
 
-        private readonly IDataProvider _dataProvider;
+        private readonly ICacheKeyService _cacheKeyService;
         private readonly IEventPublisher _eventPublisher;
         private readonly ILanguageService _languageService;
         private readonly ILocalizedEntityService _localizedEntityService;
         private readonly ILogger _logger;
         private readonly IRepository<LocaleStringResource> _lsrRepository;
         private readonly ISettingService _settingService;
-        private readonly IStaticCacheManager _cacheManager;
+        private readonly IStaticCacheManager _staticCacheManager;
         private readonly IWorkContext _workContext;
         private readonly LocalizationSettings _localizationSettings;
 
@@ -47,25 +43,25 @@ namespace Nop.Services.Localization
 
         #region Ctor
 
-        public LocalizationService(IDataProvider dataProvider,
+        public LocalizationService(ICacheKeyService cacheKeyService,
             IEventPublisher eventPublisher,
             ILanguageService languageService,
             ILocalizedEntityService localizedEntityService,
             ILogger logger,
             IRepository<LocaleStringResource> lsrRepository,
             ISettingService settingService,
-            IStaticCacheManager cacheManager,
+            IStaticCacheManager staticCacheManager,
             IWorkContext workContext,
             LocalizationSettings localizationSettings)
         {
-            _dataProvider = dataProvider;
+            _cacheKeyService = cacheKeyService;
             _eventPublisher = eventPublisher;
             _languageService = languageService;
             _localizedEntityService = localizedEntityService;
             _logger = logger;
             _lsrRepository = lsrRepository;
             _settingService = settingService;
-            _cacheManager = cacheManager;
+            _staticCacheManager = staticCacheManager;
             _workContext = workContext;
             _localizationSettings = localizationSettings;
         }
@@ -127,6 +123,31 @@ namespace Nop.Services.Localization
             {
                 _eventPublisher.EntityUpdated(resource);
             }
+        }
+
+        protected virtual HashSet<(string name, string value)> LoadLocaleResourcesFromStream(StreamReader xmlStreamReader, string language)
+        {
+            var result = new HashSet<(string name, string value)>();
+
+            using (var xmlReader = XmlReader.Create(xmlStreamReader))
+                while (xmlReader.ReadToFollowing("Language"))
+                {
+                    if (xmlReader.NodeType != XmlNodeType.Element)
+                        continue;
+
+                    using var languageReader = xmlReader.ReadSubtree();
+                    while (languageReader.ReadToFollowing("LocaleResource"))
+                        if (xmlReader.NodeType == XmlNodeType.Element && xmlReader.GetAttribute("Name") is string name)
+                        {
+                            using var lrReader = languageReader.ReadSubtree();
+                            if (lrReader.ReadToFollowing("Value") && lrReader.NodeType == XmlNodeType.Element)
+                                result.Add((name.ToLowerInvariant(), lrReader.ReadString()));
+                        }
+
+                    break;
+                }
+
+            return result;
         }
 
         private static Dictionary<string, KeyValuePair<int, string>> ResourceValuesToDictionary(IEnumerable<LocaleStringResource> locales)
@@ -249,12 +270,12 @@ namespace Nop.Services.Localization
         /// <returns>Locale string resources</returns>
         public virtual Dictionary<string, KeyValuePair<int, string>> GetAllResourceValues(int languageId, bool? loadPublicLocales)
         {
-            var key = NopLocalizationCachingDefaults.LocaleStringResourcesAllCacheKey.ToCacheKey(languageId);
+            var key = _cacheKeyService.PrepareKeyForDefaultCache(NopLocalizationDefaults.LocaleStringResourcesAllCacheKey, languageId);
 
             //get all locale string resources by language identifier
-            if (!loadPublicLocales.HasValue || _cacheManager.IsSet(key))
+            if (!loadPublicLocales.HasValue || _staticCacheManager.IsSet(key))
             {
-                var rez = _cacheManager.Get(key, () =>
+                var rez = _staticCacheManager.Get(key, () =>
                 {
                     //we use no tracking here for performance optimization
                     //anyway records are loaded only for read-only operations
@@ -267,16 +288,18 @@ namespace Nop.Services.Localization
                 });
 
                 //remove separated resource 
-                _cacheManager.Remove(NopLocalizationCachingDefaults.LocaleStringResourcesAllPublicCacheKey.ToCacheKey(languageId));
-                _cacheManager.Remove(NopLocalizationCachingDefaults.LocaleStringResourcesAllAdminCacheKey.ToCacheKey(languageId));
+                _staticCacheManager.Remove(_cacheKeyService.PrepareKeyForDefaultCache(NopLocalizationDefaults.LocaleStringResourcesAllPublicCacheKey, languageId));
+                _staticCacheManager.Remove(_cacheKeyService.PrepareKeyForDefaultCache(NopLocalizationDefaults.LocaleStringResourcesAllAdminCacheKey, languageId));
 
                 return rez;
             }
 
             //performance optimization of the site startup
-            key = (loadPublicLocales.Value ? NopLocalizationCachingDefaults.LocaleStringResourcesAllPublicCacheKey : NopLocalizationCachingDefaults.LocaleStringResourcesAllAdminCacheKey).ToCacheKey(languageId);
+            key = _cacheKeyService.PrepareKeyForDefaultCache(
+                    loadPublicLocales.Value ? NopLocalizationDefaults.LocaleStringResourcesAllPublicCacheKey : NopLocalizationDefaults.LocaleStringResourcesAllAdminCacheKey,
+                    languageId);
 
-            return _cacheManager.Get(key, () =>
+            return _staticCacheManager.Get(key, () =>
             {
                 //we use no tracking here for performance optimization
                 //anyway records are loaded only for read-only operations
@@ -330,8 +353,8 @@ namespace Nop.Services.Localization
             else
             {
                 //gradual loading
-                var key = NopLocalizationCachingDefaults.LocaleStringResourcesByResourceNameCacheKey
-                    .ToCacheKey(languageId, resourceKey);
+                var key = _cacheKeyService.PrepareKeyForDefaultCache(NopLocalizationDefaults.LocaleStringResourcesByResourceNameCacheKey
+                    , languageId, resourceKey);
 
                 var query = from l in _lsrRepository.Table
                     where l.ResourceName == resourceKey
@@ -344,7 +367,7 @@ namespace Nop.Services.Localization
                     result = lsr;
             }
 
-            if (!string.IsNullOrEmpty(result)) 
+            if (!string.IsNullOrEmpty(result))
                 return result;
 
             if (logIfNotFound)
@@ -372,30 +395,28 @@ namespace Nop.Services.Localization
         {
             if (language == null)
                 throw new ArgumentNullException(nameof(language));
-            using (var stream = new MemoryStream())
+            using var stream = new MemoryStream();
+            using (var xmlWriter = new XmlTextWriter(stream, Encoding.UTF8))
             {
-                using (var xmlWriter = new XmlTextWriter(stream, Encoding.UTF8))
+                xmlWriter.WriteStartDocument();
+                xmlWriter.WriteStartElement("Language");
+                xmlWriter.WriteAttributeString("Name", language.Name);
+                xmlWriter.WriteAttributeString("SupportedVersion", NopVersion.CURRENT_VERSION);
+
+                var resources = GetAllResources(language.Id);
+                foreach (var resource in resources)
                 {
-                    xmlWriter.WriteStartDocument();
-                    xmlWriter.WriteStartElement("Language");
-                    xmlWriter.WriteAttributeString("Name", language.Name);
-                    xmlWriter.WriteAttributeString("SupportedVersion", NopVersion.CurrentVersion);
-
-                    var resources = GetAllResources(language.Id);
-                    foreach (var resource in resources)
-                    {
-                        xmlWriter.WriteStartElement("LocaleResource");
-                        xmlWriter.WriteAttributeString("Name", resource.ResourceName);
-                        xmlWriter.WriteElementString("Value", null, resource.ResourceValue);
-                        xmlWriter.WriteEndElement();
-                    }
-
+                    xmlWriter.WriteStartElement("LocaleResource");
+                    xmlWriter.WriteAttributeString("Name", resource.ResourceName);
+                    xmlWriter.WriteElementString("Value", null, resource.ResourceValue);
                     xmlWriter.WriteEndElement();
-                    xmlWriter.WriteEndDocument();
                 }
 
-                return Encoding.UTF8.GetString(stream.ToArray());
+                xmlWriter.WriteEndElement();
+                xmlWriter.WriteEndDocument();
             }
+
+            return Encoding.UTF8.GetString(stream.ToArray());
         }
 
         /// <summary>
@@ -411,25 +432,39 @@ namespace Nop.Services.Localization
 
             if (xmlStreamReader.EndOfStream)
                 return;
+            
+            var lsNamesList = new Dictionary<string, LocaleStringResource>();
 
-            ////stored procedures are enabled and supported by the database.
-            var pLanguageId = SqlParameterHelper.GetInt32Parameter("LanguageId", language.Id);
+            foreach (var localeStringResource in _lsrRepository.Table.Where(lsr => lsr.LanguageId == language.Id)
+                .OrderBy(lsr => lsr.Id))
+                lsNamesList[localeStringResource.ResourceName.ToLowerInvariant()] = localeStringResource;
 
-            var pXmlPackage = new DataParameter
+            var lrsToUpdateList = new List<LocaleStringResource>();
+            var lrsToInsertList = new Dictionary<string, LocaleStringResource>();
+
+            foreach (var (name, value) in LoadLocaleResourcesFromStream(xmlStreamReader, language.Name))
             {
-                Name = "XmlPackage",
-                Value = new SqlXml(XmlReader.Create(xmlStreamReader)),
-                DataType = DataType.Xml
-            };
+                if (lsNamesList.ContainsKey(name))
+                {
+                    if (!updateExistingResources) 
+                        continue;
 
-            var pUpdateExistingResources = SqlParameterHelper.GetBooleanParameter("UpdateExistingResources", updateExistingResources);
+                    var lsr = lsNamesList[name];
+                    lsr.ResourceValue = value;
+                    lrsToUpdateList.Add(lsr);
+                }
+                else
+                {
+                    var lsr = new LocaleStringResource { LanguageId = language.Id, ResourceName = name, ResourceValue = value };
+                    lrsToInsertList[name] = lsr;
+                }
+            }
 
-            //long-running query. specify timeout (600 seconds)
-            _dataProvider.Query<object>("EXEC [LanguagePackImport] @LanguageId, @XmlPackage, @UpdateExistingResources",
-                pLanguageId, pXmlPackage, pUpdateExistingResources);
+            _lsrRepository.Update(lrsToUpdateList);
+            _lsrRepository.Insert(lrsToInsertList.Values);
 
             //clear cache
-            _cacheManager.RemoveByPrefix(NopLocalizationCachingDefaults.LocaleStringResourcesPrefixCacheKey);
+            _staticCacheManager.RemoveByPrefix(NopLocalizationDefaults.LocaleStringResourcesPrefixCacheKey);
         }
 
         /// <summary>
@@ -486,7 +521,7 @@ namespace Nop.Services.Localization
             }
 
             //set default value if required
-            if (!string.IsNullOrEmpty(resultStr) || !returnDefaultValue) 
+            if (!string.IsNullOrEmpty(resultStr) || !returnDefaultValue)
                 return result;
             var localizer = keySelector.Compile();
             result = localizer(entity);
@@ -644,7 +679,7 @@ namespace Nop.Services.Localization
         /// <param name="resourceName">Resource name</param>
         /// <param name="resourceValue">Resource value</param>
         /// <param name="languageCulture">Language culture code. If null or empty, then a resource will be added for all languages</param>
-        public virtual void AddOrUpdatePluginLocaleResource(string resourceName, string resourceValue, string languageCulture = null)
+        public virtual void AddOrUpdateLocaleResource(string resourceName, string resourceValue, string languageCulture = null)
         {
             foreach (var lang in _languageService.GetAllLanguages(true))
             {
@@ -671,10 +706,36 @@ namespace Nop.Services.Localization
         }
 
         /// <summary>
+        /// Add locale resources
+        /// </summary>
+        /// <param name="resources">Resource name-value pairs</param>
+        /// <param name="languageId">Language identifier; pass null to add the passed resources for all languages</param>
+        public virtual void AddLocaleResource(IDictionary<string, string> resources, int? languageId = null)
+        {
+            //first delete all previous locales with the passed names if they exist
+            DeleteLocaleResources(resources.Keys.ToList(), languageId);
+
+            //insert new locale resources
+            var locales = _languageService.GetAllLanguages(true)
+                .Where(language => !languageId.HasValue || language.Id == languageId.Value)
+                .SelectMany(language => resources.Select(resource => new LocaleStringResource
+                {
+                    LanguageId = language.Id,
+                    ResourceName = resource.Key,
+                    ResourceValue = resource.Value
+                }))
+                .ToList();
+            _lsrRepository.Insert(locales);
+
+            //clear cache
+            _staticCacheManager.RemoveByPrefix(NopLocalizationDefaults.LocaleStringResourcesPrefixCacheKey);
+        }
+
+        /// <summary>
         /// Delete a locale resource
         /// </summary>
         /// <param name="resourceName">Resource name</param>
-        public virtual void DeletePluginLocaleResource(string resourceName)
+        public virtual void DeleteLocaleResource(string resourceName)
         {
             foreach (var lang in _languageService.GetAllLanguages(true))
             {
@@ -682,6 +743,35 @@ namespace Nop.Services.Localization
                 if (lsr != null)
                     DeleteLocaleStringResource(lsr);
             }
+        }
+
+        /// <summary>
+        /// Delete locale resources
+        /// </summary>
+        /// <param name="resourceNames">Resource names</param>
+        /// <param name="languageId">Language identifier; pass null to delete the passed resources from all languages</param>
+        public virtual void DeleteLocaleResources(IList<string> resourceNames, int? languageId = null)
+        {
+            _lsrRepository.Delete(locale => (!languageId.HasValue || locale.LanguageId == languageId.Value) &&
+                resourceNames.Contains(locale.ResourceName, StringComparer.InvariantCultureIgnoreCase));
+
+            //clear cache
+            _staticCacheManager.RemoveByPrefix(NopLocalizationDefaults.LocaleStringResourcesPrefixCacheKey);
+        }
+
+        /// <summary>
+        /// Delete locale resources by the passed name prefix
+        /// </summary>
+        /// <param name="resourceNamePrefix">Resource name prefix</param>
+        /// <param name="languageId">Language identifier; pass null to delete resources by prefix from all languages</param>
+        public virtual void DeleteLocaleResources(string resourceNamePrefix, int? languageId = null)
+        {
+            _lsrRepository.Delete(locale => (!languageId.HasValue || locale.LanguageId == languageId.Value) &&
+                !string.IsNullOrEmpty(locale.ResourceName) &&
+                locale.ResourceName.StartsWith(resourceNamePrefix, StringComparison.InvariantCultureIgnoreCase));
+
+            //clear cache
+            _staticCacheManager.RemoveByPrefix(NopLocalizationDefaults.LocaleStringResourcesPrefixCacheKey);
         }
 
         /// <summary>

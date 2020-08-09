@@ -12,7 +12,7 @@ using Nop.Core.Domain.Customers;
 using Nop.Core.Domain.Discounts;
 using Nop.Core.Domain.Orders;
 using Nop.Data;
-using Nop.Services.Caching.CachingDefaults;
+using Nop.Services.Caching;
 using Nop.Services.Caching.Extensions;
 using Nop.Services.Catalog;
 using Nop.Services.Common;
@@ -39,7 +39,7 @@ namespace Nop.Services.Orders
         private readonly CatalogSettings _catalogSettings;
         private readonly IAclService _aclService;
         private readonly IActionContextAccessor _actionContextAccessor;
-        private readonly ICacheManager _cacheManager; 
+        private readonly ICacheKeyService _cacheKeyService;
         private readonly ICheckoutAttributeParser _checkoutAttributeParser;
         private readonly ICheckoutAttributeService _checkoutAttributeService;
         private readonly ICurrencyService _currencyService;
@@ -57,6 +57,7 @@ namespace Nop.Services.Orders
         private readonly IProductService _productService;
         private readonly IRepository<ShoppingCartItem> _sciRepository;
         private readonly IShippingService _shippingService;
+        private readonly IStaticCacheManager _staticCacheManager;
         private readonly IStoreContext _storeContext;
         private readonly IStoreMappingService _storeMappingService;
         private readonly IUrlHelperFactory _urlHelperFactory;
@@ -72,7 +73,7 @@ namespace Nop.Services.Orders
         public ShoppingCartService(CatalogSettings catalogSettings,
             IAclService aclService,
             IActionContextAccessor actionContextAccessor,
-            ICacheManager cacheManager,
+            ICacheKeyService cacheKeyService,
             ICheckoutAttributeParser checkoutAttributeParser,
             ICheckoutAttributeService checkoutAttributeService,
             ICurrencyService currencyService,
@@ -90,6 +91,7 @@ namespace Nop.Services.Orders
             IProductService productService,
             IRepository<ShoppingCartItem> sciRepository,
             IShippingService shippingService,
+            IStaticCacheManager staticCacheManager,
             IStoreContext storeContext,
             IStoreMappingService storeMappingService,
             IUrlHelperFactory urlHelperFactory,
@@ -101,7 +103,7 @@ namespace Nop.Services.Orders
             _catalogSettings = catalogSettings;
             _aclService = aclService;
             _actionContextAccessor = actionContextAccessor;
-            _cacheManager = cacheManager;
+            _cacheKeyService = cacheKeyService;
             _checkoutAttributeParser = checkoutAttributeParser;
             _checkoutAttributeService = checkoutAttributeService;
             _currencyService = currencyService;
@@ -119,6 +121,7 @@ namespace Nop.Services.Orders
             _productService = productService;
             _sciRepository = sciRepository;
             _shippingService = shippingService;
+            _staticCacheManager = staticCacheManager;
             _storeContext = storeContext;
             _storeMappingService = storeMappingService;
             _urlHelperFactory = urlHelperFactory;
@@ -173,7 +176,7 @@ namespace Nop.Services.Orders
             //price is the same (for products which require customers to enter a price)
             if (product.CustomerEntersPrice)
             {
-                //TODO should we use PriceCalculationService.RoundPrice here?
+                //we use rounding to eliminate errors associated with storing real numbers in memory when comparing
                 var customerEnteredPricesEqual = Math.Round(shoppingCartItem.CustomerEnteredPrice, 2) == Math.Round(customerEnteredPrice, 2);
                 if (!customerEnteredPricesEqual)
                     return false;
@@ -301,7 +304,7 @@ namespace Nop.Services.Orders
 
             var cartItems = query.ToList();
             foreach (var cartItem in cartItems)
-                _sciRepository.Delete(cartItem);
+                DeleteShoppingCartItem(cartItem);
             return cartItems.Count;
         }
 
@@ -431,10 +434,11 @@ namespace Nop.Services.Orders
         /// <param name="attributesXml">Attributes in XML format</param>
         /// <param name="customerEnteredPrice">Customer entered price</param>
         /// <param name="quantity">Quantity</param>
+        /// <param name="shoppingCartItemId">Shopping cart identifier; pass 0 if it's a new item</param>
+        /// <param name="storeId">Store identifier</param>
         /// <returns>Warnings</returns>
-        public virtual IList<string> GetStandardWarnings(Customer customer, ShoppingCartType shoppingCartType,
-            Product product, string attributesXml, decimal customerEnteredPrice,
-            int quantity)
+        public virtual IList<string> GetStandardWarnings(Customer customer, ShoppingCartType shoppingCartType, Product product, 
+            string attributesXml, decimal customerEnteredPrice, int quantity, int shoppingCartItemId, int storeId)
         {
             if (customer == null)
                 throw new ArgumentNullException(nameof(customer));
@@ -554,6 +558,50 @@ namespace Nop.Services.Orders
                                 else
                                     warnings.Add(string.Format(_localizationService.GetResource("ShoppingCart.QuantityExceedsStock"), maximumQuantityCanBeAdded));
                             }
+
+                            if (warnings.Any())
+                                return warnings;
+
+                            //validate product quantity with non combinable product attributes
+                            var productAttributeMappings = _productAttributeService.GetProductAttributeMappingsByProductId(product.Id);
+                            if (productAttributeMappings?.Any() == true)
+                            {
+                                var onlyCombinableAttributes = productAttributeMappings.All(mapping => !mapping.IsNonCombinable());
+                                if (!onlyCombinableAttributes)
+                                {
+                                    var cart = GetShoppingCart(customer, shoppingCartType, storeId);
+                                    var totalAddedQuantity = cart
+                                        .Where(item => item.ProductId == product.Id)
+                                        .Sum(product => product.Quantity);
+
+                                    var alreadyExistedItem = cart.FirstOrDefault(item => item.Id == shoppingCartItemId);
+                                    if (alreadyExistedItem == null)
+                                    {
+                                        //it's new item
+                                        totalAddedQuantity += quantity;
+                                    }
+                                    else
+                                    {
+                                        //it's existing item, then add to total the added quantity only
+                                        if (quantity > alreadyExistedItem.Quantity)
+                                            totalAddedQuantity += quantity - alreadyExistedItem.Quantity;
+                                    }
+
+                                    if (maximumQuantityCanBeAdded < totalAddedQuantity)
+                                    {
+                                        if (maximumQuantityCanBeAdded <= 0)
+                                        {
+                                            var productAvailabilityRange = _dateRangeService.GetProductAvailabilityRangeById(product.ProductAvailabilityRangeId);
+                                            var warning = productAvailabilityRange == null ? _localizationService.GetResource("ShoppingCart.OutOfStock")
+                                                : string.Format(_localizationService.GetResource("ShoppingCart.AvailabilityRange"),
+                                                    _localizationService.GetLocalized(productAvailabilityRange, range => range.Name));
+                                            warnings.Add(warning);
+                                        }
+                                        else
+                                            warnings.Add(string.Format(_localizationService.GetResource("ShoppingCart.QuantityExceedsStock"), maximumQuantityCanBeAdded));
+                                    }
+                                }
+                            }
                         }
 
                         break;
@@ -660,9 +708,9 @@ namespace Nop.Services.Orders
             if (createdToUtc.HasValue)
                 items = items.Where(item => createdToUtc.Value >= item.CreatedOnUtc);
 
-            var key = NopOrderCachingDefaults.ShoppingCartCacheKey.ToCacheKey(customer, shoppingCartType, storeId, productId, createdFromUtc, createdToUtc);
+            var key = _cacheKeyService.PrepareKeyForShortTermCache(NopOrderDefaults.ShoppingCartCacheKey, customer, shoppingCartType, storeId, productId, createdFromUtc, createdToUtc);
 
-            return _cacheManager.Get(key, () => items.ToList());
+            return _staticCacheManager.Get(key, () => items.ToList());
         }
 
         /// <summary>
@@ -1006,7 +1054,7 @@ namespace Nop.Services.Orders
 
             //standard properties
             if (getStandardWarnings)
-                warnings.AddRange(GetStandardWarnings(customer, shoppingCartType, product, attributesXml, customerEnteredPrice, quantity));
+                warnings.AddRange(GetStandardWarnings(customer, shoppingCartType, product, attributesXml, customerEnteredPrice, quantity, shoppingCartItemId, storeId));
 
             //selected attributes
             if (getAttributesWarnings)

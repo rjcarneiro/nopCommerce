@@ -6,7 +6,6 @@ using System.Linq;
 using System.Text;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.Extensions.Primitives;
 using Nop.Core;
 using Nop.Core.Domain.Catalog;
 using Nop.Core.Domain.Orders;
@@ -180,235 +179,12 @@ namespace Nop.Web.Areas.Admin.Controllers
             return HasAccessToOrder(shipment.OrderId);
         }
 
-        /// <summary>
-        /// Parse product attributes on the add product to order details page
-        /// </summary>
-        /// <param name="product">Product</param>
-        /// <param name="form">Form</param>
-        /// <param name="errors">Errors</param>
-        /// <returns>Parsed attributes</returns>
-        protected virtual string ParseProductAttributes(Product product, IFormCollection form, List<string> errors)
-        {
-            var attributesXml = string.Empty;
-
-            var productAttributes = _productAttributeService.GetProductAttributeMappingsByProductId(product.Id);
-            foreach (var attribute in productAttributes)
-            {
-                var controlId = $"{NopAttributePrefixDefaults.Product}{attribute.Id}";
-                StringValues ctrlAttributes;
-
-                switch (attribute.AttributeControlType)
-                {
-                    case AttributeControlType.DropdownList:
-                    case AttributeControlType.RadioList:
-                    case AttributeControlType.ColorSquares:
-                    case AttributeControlType.ImageSquares:
-                        ctrlAttributes = form[controlId];
-                        if (!StringValues.IsNullOrEmpty(ctrlAttributes))
-                        {
-                            var selectedAttributeId = int.Parse(ctrlAttributes);
-                            if (selectedAttributeId > 0)
-                            {
-                                //get quantity entered by customer
-                                var quantity = 1;
-                                var quantityStr = form[$"{NopAttributePrefixDefaults.Product}{attribute.Id}_{selectedAttributeId}_qty"];
-                                if (!StringValues.IsNullOrEmpty(quantityStr) &&
-                                    (!int.TryParse(quantityStr, out quantity) || quantity < 1))
-                                    errors.Add(_localizationService.GetResource("ShoppingCart.QuantityShouldPositive"));
-
-                                attributesXml = _productAttributeParser.AddProductAttribute(attributesXml,
-                                    attribute, selectedAttributeId.ToString(), quantity > 1 ? (int?)quantity : null);
-                            }
-                        }
-
-                        break;
-                    case AttributeControlType.Checkboxes:
-                        ctrlAttributes = form[controlId];
-                        if (!StringValues.IsNullOrEmpty(ctrlAttributes))
-                        {
-                            foreach (var item in ctrlAttributes.ToString()
-                                .Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries))
-                            {
-                                var selectedAttributeId = int.Parse(item);
-                                if (selectedAttributeId <= 0)
-                                    continue;
-
-                                //get quantity entered by customer
-                                var quantity = 1;
-                                var quantityStr = form[$"{NopAttributePrefixDefaults.Product}{attribute.Id}_{item}_qty"];
-                                if (!StringValues.IsNullOrEmpty(quantityStr) &&
-                                    (!int.TryParse(quantityStr, out quantity) || quantity < 1))
-                                    errors.Add(_localizationService.GetResource("ShoppingCart.QuantityShouldPositive"));
-
-                                attributesXml = _productAttributeParser.AddProductAttribute(attributesXml,
-                                    attribute, selectedAttributeId.ToString(), quantity > 1 ? (int?)quantity : null);
-                            }
-                        }
-
-                        break;
-                    case AttributeControlType.ReadonlyCheckboxes:
-                        //load read-only (already server-side selected) values
-                        var attributeValues = _productAttributeService.GetProductAttributeValues(attribute.Id);
-                        foreach (var selectedAttributeId in attributeValues
-                            .Where(v => v.IsPreSelected)
-                            .Select(v => v.Id)
-                            .ToList())
-                        {
-                            //get quantity entered by customer
-                            var quantity = 1;
-                            var quantityStr = form[$"{NopAttributePrefixDefaults.Product}{attribute.Id}_{selectedAttributeId}_qty"];
-                            if (!StringValues.IsNullOrEmpty(quantityStr) &&
-                                (!int.TryParse(quantityStr, out quantity) || quantity < 1))
-                                errors.Add(_localizationService.GetResource("ShoppingCart.QuantityShouldPositive"));
-
-                            attributesXml = _productAttributeParser.AddProductAttribute(attributesXml,
-                                attribute, selectedAttributeId.ToString(), quantity > 1 ? (int?)quantity : null);
-                        }
-
-                        break;
-                    case AttributeControlType.TextBox:
-                    case AttributeControlType.MultilineTextbox:
-                        ctrlAttributes = form[controlId];
-                        if (!StringValues.IsNullOrEmpty(ctrlAttributes))
-                        {
-                            var enteredText = ctrlAttributes.ToString().Trim();
-                            attributesXml = _productAttributeParser.AddProductAttribute(attributesXml,
-                                attribute, enteredText);
-                        }
-
-                        break;
-                    case AttributeControlType.Datepicker:
-
-                        var day = form[controlId + "_day"];
-                        var month = form[controlId + "_month"];
-                        var year = form[controlId + "_year"];
-                        DateTime? selectedDate = null;
-                        try
-                        {
-                            selectedDate = new DateTime(int.Parse(year), int.Parse(month), int.Parse(day));
-                        }
-                        catch
-                        {
-                            // ignored
-                        }
-
-                        if (selectedDate.HasValue)
-                        {
-                            attributesXml = _productAttributeParser.AddProductAttribute(attributesXml,
-                                attribute, selectedDate.Value.ToString("D"));
-                        }
-
-                        break;
-                    case AttributeControlType.FileUpload:
-
-                        Guid.TryParse(form[controlId], out var downloadGuid);
-                        var download = _downloadService.GetDownloadByGuid(downloadGuid);
-                        if (download != null)
-                        {
-                            attributesXml = _productAttributeParser.AddProductAttribute(attributesXml,
-                                attribute, download.DownloadGuid.ToString());
-                        }
-
-                        break;
-                    default:
-                        break;
-                }
-            }
-            //validate conditional attributes (if specified)
-            foreach (var attribute in productAttributes)
-            {
-                var conditionMet = _productAttributeParser.IsConditionMet(attribute, attributesXml);
-                if (conditionMet.HasValue && !conditionMet.Value)
-                {
-                    attributesXml = _productAttributeParser.RemoveProductAttribute(attributesXml, attribute);
-                }
-            }
-
-            return attributesXml;
-        }
-
-        /// <summary>
-        /// Parse rental dates on the add product to order details page
-        /// </summary>
-        /// <param name="form">Form</param>
-        /// <param name="startDate">Start date</param>
-        /// <param name="endDate">End date</param>
-        protected virtual void ParseRentalDates(IFormCollection form, out DateTime? startDate, out DateTime? endDate)
-        {
-            startDate = null;
-            endDate = null;
-
-            var ctrlStartDate = form["rental_start_date"];
-            var ctrlEndDate = form["rental_end_date"];
-            try
-            {
-                const string datePickerFormat = "MM/dd/yyyy";
-                startDate = DateTime.ParseExact(ctrlStartDate, datePickerFormat, CultureInfo.InvariantCulture);
-                endDate = DateTime.ParseExact(ctrlEndDate, datePickerFormat, CultureInfo.InvariantCulture);
-            }
-            catch
-            {
-                // ignored
-            }
-        }
-
         protected virtual void LogEditOrder(int orderId)
         {
             var order = _orderService.GetOrderById(orderId);
 
             _customerActivityService.InsertActivity("EditOrder",
                 string.Format(_localizationService.GetResource("ActivityLog.EditOrder"), order.CustomOrderNumber), order);
-        }
-
-        protected virtual string AddGiftCards(IFormCollection form, Product product, string attributesXml,
-           out string recipientName, out string recipientEmail, out string senderName, out string senderEmail,
-           out string giftCardMessage)
-        {
-            recipientName = string.Empty;
-            recipientEmail = string.Empty;
-            senderName = string.Empty;
-            senderEmail = string.Empty;
-            giftCardMessage = string.Empty;
-
-            if (!product.IsGiftCard)
-                return attributesXml;
-
-            foreach (var formKey in form.Keys)
-            {
-                if (formKey.Equals("giftcard.RecipientName", StringComparison.InvariantCultureIgnoreCase))
-                {
-                    recipientName = form[formKey];
-                    continue;
-                }
-
-                if (formKey.Equals("giftcard.RecipientEmail", StringComparison.InvariantCultureIgnoreCase))
-                {
-                    recipientEmail = form[formKey];
-                    continue;
-                }
-
-                if (formKey.Equals("giftcard.SenderName", StringComparison.InvariantCultureIgnoreCase))
-                {
-                    senderName = form[formKey];
-                    continue;
-                }
-
-                if (formKey.Equals("giftcard.SenderEmail", StringComparison.InvariantCultureIgnoreCase))
-                {
-                    senderEmail = form[formKey];
-                    continue;
-                }
-
-                if (formKey.Equals("giftcard.Message", StringComparison.InvariantCultureIgnoreCase))
-                {
-                    giftCardMessage = form[formKey];
-                }
-            }
-
-            attributesXml = _productAttributeParser.AddGiftCardAttribute(attributesXml,
-                recipientName, recipientEmail, senderName, senderEmail, giftCardMessage);
-
-            return attributesXml;
         }
 
         #endregion
@@ -472,36 +248,6 @@ namespace Nop.Web.Areas.Admin.Controllers
             return RedirectToAction("Edit", "Order", new { id = order.Id });
         }
 
-        public virtual IActionResult ProductSearchAutoComplete(string term)
-        {
-            const int searchTermMinimumLength = 3;
-            if (string.IsNullOrWhiteSpace(term) || term.Length < searchTermMinimumLength)
-                return Content(string.Empty);
-
-            //a vendor should have access only to his products
-            var vendorId = 0;
-            if (_workContext.CurrentVendor != null)
-            {
-                vendorId = _workContext.CurrentVendor.Id;
-            }
-
-            //products
-            const int productNumber = 15;
-            var products = _productService.SearchProducts(
-                vendorId: vendorId,
-                keywords: term,
-                pageSize: productNumber,
-                showHidden: true);
-
-            var result = (from p in products
-                          select new
-                          {
-                              label = p.Name,
-                              productid = p.Id
-                          }).ToList();
-            return Json(result);
-        }
-
         #endregion
 
         #region Export / Import
@@ -557,10 +303,16 @@ namespace Nop.Web.Areas.Admin.Controllers
                 billingCountryId: model.BillingCountryId,
                 orderNotes: model.OrderNotes);
 
+            //ensure that we at least one order selected
+            if (!orders.Any())
+            {
+                _notificationService.ErrorNotification(_localizationService.GetResource("Admin.Orders.NoOrders"));
+                return RedirectToAction("List");
+            }
+
             try
             {
                 var xml = _exportManager.ExportOrdersToXml(orders);
-
                 return File(Encoding.UTF8.GetBytes(xml), MimeTypes.ApplicationXml, "orders.xml");
             }
             catch (Exception exc)
@@ -586,9 +338,16 @@ namespace Nop.Web.Areas.Admin.Controllers
                 orders.AddRange(_orderService.GetOrdersByIds(ids).Where(HasAccessToOrder));
             }
 
-            var xml = _exportManager.ExportOrdersToXml(orders);
-
-            return File(Encoding.UTF8.GetBytes(xml), MimeTypes.ApplicationXml, "orders.xml");
+            try
+            {
+                var xml = _exportManager.ExportOrdersToXml(orders);
+                return File(Encoding.UTF8.GetBytes(xml), MimeTypes.ApplicationXml, "orders.xml");
+            }
+            catch (Exception exc)
+            {
+                _notificationService.ErrorNotification(exc);
+                return RedirectToAction("List");
+            }
         }
 
         [HttpPost, ActionName("ExportExcel")]
@@ -641,6 +400,13 @@ namespace Nop.Web.Areas.Admin.Controllers
                 billingLastName: model.BillingLastName,
                 billingCountryId: model.BillingCountryId,
                 orderNotes: model.OrderNotes);
+
+            //ensure that we at least one order selected
+            if (!orders.Any())
+            {
+                _notificationService.ErrorNotification(_localizationService.GetResource("Admin.Orders.NoOrders"));
+                return RedirectToAction("List");
+            }
 
             try
             {
@@ -1206,14 +972,29 @@ namespace Nop.Web.Areas.Admin.Controllers
                 billingCountryId: model.BillingCountryId,
                 orderNotes: model.OrderNotes);
 
-            byte[] bytes;
-            using (var stream = new MemoryStream())
+            //ensure that we at least one order selected
+            if (!orders.Any())
             {
-                _pdfService.PrintOrdersToPdf(stream, orders, _orderSettings.GeneratePdfInvoiceInCustomerLanguage ? 0 : _workContext.WorkingLanguage.Id, model.VendorId);
-                bytes = stream.ToArray();
+                _notificationService.ErrorNotification(_localizationService.GetResource("Admin.Orders.NoOrders"));
+                return RedirectToAction("List");
             }
 
-            return File(bytes, MimeTypes.ApplicationPdf, "orders.pdf");
+            try
+            {
+                byte[] bytes;
+                using (var stream = new MemoryStream())
+                {
+                    _pdfService.PrintOrdersToPdf(stream, orders, _orderSettings.GeneratePdfInvoiceInCustomerLanguage ? 0 : _workContext.WorkingLanguage.Id, model.VendorId);
+                    bytes = stream.ToArray();
+                }
+
+                return File(bytes, MimeTypes.ApplicationPdf, "orders.pdf");
+            }
+            catch (Exception exc)
+            {
+                _notificationService.ErrorNotification(exc);
+                return RedirectToAction("List");
+            }
         }
 
         [HttpPost]
@@ -1240,21 +1021,22 @@ namespace Nop.Web.Areas.Admin.Controllers
                 vendorId = _workContext.CurrentVendor.Id;
             }
 
-            //ensure that we at least one order selected
-            if (!orders.Any())
+            try
             {
-                _notificationService.ErrorNotification(_localizationService.GetResource("Admin.Orders.PdfInvoice.NoOrders"));
+                byte[] bytes;
+                using (var stream = new MemoryStream())
+                {
+                    _pdfService.PrintOrdersToPdf(stream, orders, _orderSettings.GeneratePdfInvoiceInCustomerLanguage ? 0 : _workContext.WorkingLanguage.Id, vendorId);
+                    bytes = stream.ToArray();
+                }
+
+                return File(bytes, MimeTypes.ApplicationPdf, "orders.pdf");
+            }
+            catch (Exception exc)
+            {
+                _notificationService.ErrorNotification(exc);
                 return RedirectToAction("List");
             }
-
-            byte[] bytes;
-            using (var stream = new MemoryStream())
-            {
-                _pdfService.PrintOrdersToPdf(stream, orders, _orderSettings.GeneratePdfInvoiceInCustomerLanguage ? 0 : _workContext.WorkingLanguage.Id, vendorId);
-                bytes = stream.ToArray();
-            }
-
-            return File(bytes, MimeTypes.ApplicationPdf, "orders.pdf");
         }
 
         //currently we use this method on the add product to order details pages
@@ -1266,7 +1048,7 @@ namespace Nop.Web.Areas.Admin.Controllers
                 return new NullJsonResult();
 
             var errors = new List<string>();
-            var attributeXml = ParseProductAttributes(product, form, errors);
+            var attributeXml = _productAttributeParser.ParseProductAttributes(product, form, errors);
 
             //conditional attributes
             var enabledAttributeMappingIds = new List<int>();
@@ -1889,18 +1671,10 @@ namespace Nop.Web.Areas.Admin.Controllers
             var warnings = new List<string>();
 
             //attributes
-            var attributesXml = ParseProductAttributes(product, form, warnings);
-
-            //gift cards
-            attributesXml = AddGiftCards(form, product, attributesXml, out var recipientName, out var recipientEmail, out var senderName, out var senderEmail, out var giftCardMessage);
+            var attributesXml = _productAttributeParser.ParseProductAttributes(product, form, warnings);
 
             //rental product
-            DateTime? rentalStartDate = null;
-            DateTime? rentalEndDate = null;
-            if (product.IsRental)
-            {
-                ParseRentalDates(form, out rentalStartDate, out rentalEndDate);
-            }
+            _productAttributeParser.ParseRentalDates(product, form, out var rentalStartDate, out var rentalEndDate);
 
             //warnings
             warnings.AddRange(_shoppingCartService.GetShoppingCartItemAttributeWarnings(customer, ShoppingCartType.ShoppingCart, product, quantity, attributesXml));
@@ -1971,6 +1745,9 @@ namespace Nop.Web.Areas.Admin.Controllers
                 //gift cards
                 if (product.IsGiftCard)
                 {
+                    _productAttributeParser.GetGiftCardAttribute(
+                        attributesXml, out var recipientName, out var recipientEmail, out var senderName, out var senderEmail, out var giftCardMessage);
+
                     for (var i = 0; i < orderItem.Quantity; i++)
                     {
                         var gc = new GiftCard
@@ -2216,8 +1993,6 @@ namespace Nop.Web.Areas.Admin.Controllers
                 OrderId = order.Id,
                 TrackingNumber = model.TrackingNumber,
                 TotalWeight = null,
-                ShippedDateUtc = model.CanShip ? DateTime.UtcNow : default(DateTime?),
-                DeliveryDateUtc = (model.CanShip && model.CanDeliver) ? DateTime.UtcNow : default(DateTime?),
                 AdminComment = model.AdminComment,
                 CreatedOnUtc = DateTime.UtcNow
             };
@@ -2285,17 +2060,6 @@ namespace Nop.Web.Areas.Admin.Controllers
                     Quantity = qtyToAdd,
                     WarehouseId = warehouseId
                 });
-
-                var quantityWithReserved = _productService.GetTotalStockQuantity(product, true, warehouseId);
-                var quantityTotal = _productService.GetTotalStockQuantity(product, false, warehouseId);
-
-                //currently reserved in current stock
-                var quantityReserved = quantityTotal - quantityWithReserved;
-
-                //If the quantity of the reserve product in the warehouse does not coincide with the total quantity of goods in the basket, 
-                //it is necessary to redistribute the reserve to the warehouse
-                if (!(quantityReserved == qtyToAdd && quantityReserved == maxQtyToAdd))
-                    _productService.BalanceInventory(product, warehouseId, qtyToAdd);
             }
 
             //if we have at least one item in the shipment, then save it
@@ -2319,12 +2083,18 @@ namespace Nop.Web.Areas.Admin.Controllers
                     CreatedOnUtc = DateTime.UtcNow
                 });
 
-                LogEditOrder(order.Id);
+                if(model.CanShip)
+                    _orderProcessingService.Ship(shipment, true);
 
+                if(model.CanShip && model.CanDeliver)
+                    _orderProcessingService.Deliver(shipment, true);
+
+                LogEditOrder(order.Id);
+                
                 _notificationService.SuccessNotification(_localizationService.GetResource("Admin.Orders.Shipments.Added"));
                 return continueEditing
-                           ? RedirectToAction("ShipmentDetails", new { id = shipment.Id })
-                           : RedirectToAction("Edit", new { id = model.OrderId });
+                        ? RedirectToAction("ShipmentDetails", new { id = shipment.Id })
+                        : RedirectToAction("Edit", new { id = model.OrderId });
             }
 
             _notificationService.ErrorNotification(_localizationService.GetResource("Admin.Orders.Shipments.NoProductsSelected"));
@@ -2638,14 +2408,22 @@ namespace Nop.Web.Areas.Admin.Controllers
                 return RedirectToAction("ShipmentList");
             }
 
-            byte[] bytes;
-            using (var stream = new MemoryStream())
+            try
             {
-                _pdfService.PrintPackagingSlipsToPdf(stream, shipments, _orderSettings.GeneratePdfInvoiceInCustomerLanguage ? 0 : _workContext.WorkingLanguage.Id);
-                bytes = stream.ToArray();
-            }
+                byte[] bytes;
+                using (var stream = new MemoryStream())
+                {
+                    _pdfService.PrintPackagingSlipsToPdf(stream, shipments, _orderSettings.GeneratePdfInvoiceInCustomerLanguage ? 0 : _workContext.WorkingLanguage.Id);
+                    bytes = stream.ToArray();
+                }
 
-            return File(bytes, MimeTypes.ApplicationPdf, "packagingslips.pdf");
+                return File(bytes, MimeTypes.ApplicationPdf, "packagingslips.pdf");
+            }
+            catch (Exception exc)
+            {
+                _notificationService.ErrorNotification(exc);
+                return RedirectToAction("ShipmentList");
+            }
         }
 
         [HttpPost]
@@ -2669,21 +2447,22 @@ namespace Nop.Web.Areas.Admin.Controllers
                 shipments = shipments.Where(HasAccessToShipment).ToList();
             }
 
-            //ensure that we at least one shipment selected
-            if (!shipments.Any())
+            try
             {
-                _notificationService.ErrorNotification(_localizationService.GetResource("Admin.Orders.Shipments.NoShipmentsSelected"));
+                byte[] bytes;
+                using (var stream = new MemoryStream())
+                {
+                    _pdfService.PrintPackagingSlipsToPdf(stream, shipments, _orderSettings.GeneratePdfInvoiceInCustomerLanguage ? 0 : _workContext.WorkingLanguage.Id);
+                    bytes = stream.ToArray();
+                }
+
+                return File(bytes, MimeTypes.ApplicationPdf, "packagingslips.pdf");
+            }
+            catch (Exception exc)
+            {
+                _notificationService.ErrorNotification(exc);
                 return RedirectToAction("ShipmentList");
             }
-
-            byte[] bytes;
-            using (var stream = new MemoryStream())
-            {
-                _pdfService.PrintPackagingSlipsToPdf(stream, shipments, _orderSettings.GeneratePdfInvoiceInCustomerLanguage ? 0 : _workContext.WorkingLanguage.Id);
-                bytes = stream.ToArray();
-            }
-
-            return File(bytes, MimeTypes.ApplicationPdf, "packagingslips.pdf");
         }
 
         [HttpPost]

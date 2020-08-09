@@ -247,7 +247,7 @@ namespace Nop.Services.Orders
                         SumRefundedAmount = r.OrederRefundedAmountSum
                 }).FirstOrDefault();
 
-            item = item ?? new OrderAverageReportLine
+            item ??= new OrderAverageReportLine
             {
                 CountOrders = 0,
                 SumShippingExclTax = decimal.Zero,
@@ -345,7 +345,7 @@ namespace Nop.Services.Orders
             DateTime? createdFromUtc = null, DateTime? createdToUtc = null,
             OrderStatus? os = null, PaymentStatus? ps = null, ShippingStatus? ss = null,
             int billingCountryId = 0,
-            int orderBy = 1,
+            OrderByEnum orderBy = OrderByEnum.OrderByQuantity,
             int pageIndex = 0, int pageSize = int.MaxValue,
             bool showHidden = false)
         {
@@ -402,18 +402,12 @@ namespace Nop.Services.Orders
                     TotalQuantity = g.Sum(x => x.Quantity)
                 };
 
-            switch (orderBy)
+            query2 = orderBy switch
             {
-                case 1:
-                    query2 = query2.OrderByDescending(x => x.TotalQuantity);
-                    break;
-                case 2:
-                    query2 = query2.OrderByDescending(x => x.TotalAmount);
-                    break;
-                default:
-                    throw new ArgumentException("Wrong orderBy parameter", nameof(orderBy));
-            }
-
+                OrderByEnum.OrderByQuantity => query2.OrderByDescending(x => x.TotalQuantity),
+                OrderByEnum.OrderByTotalAmount => query2.OrderByDescending(x => x.TotalAmount),
+                _ => throw new ArgumentException("Wrong orderBy parameter", nameof(orderBy)),
+            };
             var result = new PagedList<BestsellersReportLine>(query2, pageIndex, pageSize);
             return result;
         }

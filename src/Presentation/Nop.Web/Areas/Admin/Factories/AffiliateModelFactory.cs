@@ -228,14 +228,17 @@ namespace Nop.Web.Areas.Admin.Factories
             //fill in model values from the entity
             if (affiliate != null)
             {
-                model = model ?? affiliate.ToModel<AffiliateModel>();
+                model ??= affiliate.ToModel<AffiliateModel>();
                 model.Url = _affiliateService.GenerateUrl(affiliate);
 
                 //prepare nested search models
                 PrepareAffiliatedOrderSearchModel(model.AffiliatedOrderSearchModel, affiliate);
                 PrepareAffiliatedCustomerSearchModel(model.AffiliatedCustomerSearchModel, affiliate);
 
+                //prepare address model
                 var address = _addressService.GetAddressById(affiliate.AddressId);
+                model.Address = address.ToModel(model.Address);
+                PrepareAddressModel(model.Address, address);
 
                 //whether to fill in some of properties
                 if (!excludeProperties)
@@ -243,10 +246,6 @@ namespace Nop.Web.Areas.Admin.Factories
                     model.AdminComment = affiliate.AdminComment;
                     model.FriendlyUrlName = affiliate.FriendlyUrlName;
                     model.Active = affiliate.Active;
-                    model.Address = address.ToModel(model.Address);
-
-                    //prepare address model
-                    PrepareAddressModel(model.Address, address);
                 }
             }
             else

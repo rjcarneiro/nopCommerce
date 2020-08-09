@@ -15,6 +15,7 @@ using Nop.Services.Localization;
 using Nop.Services.Media;
 using Nop.Services.Tax;
 using NUnit.Framework;
+using Nop.Tests;
 
 namespace Nop.Services.Tests.Catalog
 {
@@ -29,8 +30,6 @@ namespace Nop.Services.Tests.Catalog
         private IProductAttributeService _productAttributeService;
         private IProductAttributeParser _productAttributeParser;
         private Mock<IEventPublisher> _eventPublisher;
-
-        private Mock<IDataProvider> _dataProvider;
         private Mock<IWorkContext> _workContext;
         private Mock<ICurrencyService> _currencyService;
         private ILocalizationService _localizationService;
@@ -186,16 +185,13 @@ namespace Nop.Services.Tests.Catalog
             _eventPublisher = new Mock<IEventPublisher>();
             _eventPublisher.Setup(x => x.Publish(It.IsAny<object>()));
 
-            _productAttributeService = new ProductAttributeService(_eventPublisher.Object,
+            _productAttributeService = new ProductAttributeService(new FakeCacheKeyService(), 
+                _eventPublisher.Object,
                 _predefinedProductAttributeValueRepo.Object,
                 _productAttributeRepo.Object,
                 _productAttributeCombinationRepo.Object,
                 _productAttributeMappingRepo.Object,
                 _productAttributeValueRepo.Object);
-
-            _dataProvider = new Mock<IDataProvider>();
-
-            _productAttributeParser = new ProductAttributeParser(_dataProvider.Object,_productAttributeService);
 
             _priceCalculationService = new Mock<IPriceCalculationService>();
 
@@ -210,6 +206,13 @@ namespace Nop.Services.Tests.Catalog
             _downloadService = new Mock<IDownloadService>();
             _webHelper = new Mock<IWebHelper>();
             _shoppingCartSettings = new ShoppingCartSettings();
+
+            _productAttributeParser = new ProductAttributeParser(_currencyService.Object,
+                _downloadService.Object,
+                _localizationService,
+                _productAttributeService,
+                _productAttributeValueRepo.Object,
+                _workContext.Object);
 
             _productAttributeFormatter = new ProductAttributeFormatter(_currencyService.Object,
                 _downloadService.Object,

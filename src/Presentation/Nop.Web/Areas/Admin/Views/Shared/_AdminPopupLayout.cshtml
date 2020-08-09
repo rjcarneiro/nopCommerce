@@ -3,16 +3,15 @@
 @inject CommonSettings commonSettings
 @inject IEventPublisher eventPublisher
 @inject INopFileProvider fileProvider;
-@inject Microsoft.AspNetCore.Hosting.IHostingEnvironment HostingEnvironment
+@inject Microsoft.AspNetCore.Hosting.IWebHostEnvironment WebHostEnvironment
 @using System.Globalization
-@using Nop.Services.Defaults
 @using Nop.Web.Framework.UI;
-@using Nop.Core;
 @using Nop.Core.Domain.Localization
+@using Nop.Services.Common
 @inject Nop.Services.Localization.ILanguageService languageService
 @{
     //Kendo UI
-    var kendoVersion = "2019.3.1023";
+    var kendoVersion = "2020.1.406";
     var currentKendoCulture = EngineContext.Current.Resolve<IWorkContext>().WorkingLanguage.LanguageCulture;
     var currentCulture = CultureInfo.CurrentCulture;
 
@@ -22,9 +21,9 @@
         var localePattern = NopCommonDefaults.LocalePatternPath;
         var cultureToUse = NopCommonDefaults.DefaultLocalePattern; //Default regionalisation to use
 
-        if (fileProvider.DirectoryExists(fileProvider.Combine(HostingEnvironment.WebRootPath, string.Format(localePattern, currentCulture.Name))))
+        if (fileProvider.DirectoryExists(fileProvider.Combine(WebHostEnvironment.WebRootPath, string.Format(localePattern, currentCulture.Name))))
             cultureToUse = currentCulture.Name;
-        else if (fileProvider.DirectoryExists(fileProvider.Combine(HostingEnvironment.WebRootPath, string.Format(localePattern, currentCulture.TwoLetterISOLanguageName))))
+        else if (fileProvider.DirectoryExists(fileProvider.Combine(WebHostEnvironment.WebRootPath, string.Format(localePattern, currentCulture.TwoLetterISOLanguageName))))
             cultureToUse = currentCulture.TwoLetterISOLanguageName;
 
         return cultureToUse;
@@ -102,12 +101,6 @@
     //page title
     string adminPageTitle = !string.IsNullOrWhiteSpace(ViewBag.PageTitle) ? ViewBag.PageTitle + " / " : "";
     adminPageTitle += T("Admin.PageTitle").Text;
-
-    //X-UA-Compatible tag
-    if (commonSettings.RenderXuaCompatible)
-    {
-        Html.AppendHeadCustomParts($"<meta http-equiv=\"X-UA-Compatible\" content=\"{commonSettings.XuaCompatibleValue}\"/>");
-    }
 
     //event
     eventPublisher.Publish(new PageRenderingEvent(this.Html));

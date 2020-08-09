@@ -12,7 +12,7 @@ using Nop.Core.Domain.Shipping;
 using Nop.Core.Domain.Tax;
 using Nop.Core.Infrastructure;
 using Nop.Data;
-using Nop.Services.Caching.CachingDefaults;
+using Nop.Services.Caching;
 using Nop.Services.Caching.Extensions;
 using Nop.Services.Common;
 using Nop.Services.Events;
@@ -27,9 +27,9 @@ namespace Nop.Services.Customers
     {
         #region Fields
 
+        private readonly CachingSettings _cachingSettings;
         private readonly CustomerSettings _customerSettings;
-        private readonly ICacheManager _cacheManager;
-        private readonly IDataProvider _dataProvider;
+        private readonly ICacheKeyService _cacheKeyService;
         private readonly IEventPublisher _eventPublisher;
         private readonly IGenericAttributeService _genericAttributeService;
         private readonly IRepository<Address> _customerAddressRepository;
@@ -41,15 +41,16 @@ namespace Nop.Services.Customers
         private readonly IRepository<GenericAttribute> _gaRepository;
         private readonly IRepository<ShoppingCartItem> _shoppingCartRepository;
         private readonly IStaticCacheManager _staticCacheManager;
+        private readonly IStoreContext _storeContext;
         private readonly ShoppingCartSettings _shoppingCartSettings;
 
         #endregion
 
         #region Ctor
 
-        public CustomerService(CustomerSettings customerSettings,
-            ICacheManager cacheManager,
-            IDataProvider dataProvider,
+        public CustomerService(CachingSettings cachingSettings,
+            CustomerSettings customerSettings,
+            ICacheKeyService cacheKeyService,
             IEventPublisher eventPublisher,
             IGenericAttributeService genericAttributeService,
             IRepository<Address> customerAddressRepository,
@@ -61,11 +62,12 @@ namespace Nop.Services.Customers
             IRepository<GenericAttribute> gaRepository,
             IRepository<ShoppingCartItem> shoppingCartRepository,
             IStaticCacheManager staticCacheManager,
+            IStoreContext storeContext,
             ShoppingCartSettings shoppingCartSettings)
         {
+            _cachingSettings = cachingSettings;
             _customerSettings = customerSettings;
-            _cacheManager = cacheManager;
-            _dataProvider = dataProvider;
+            _cacheKeyService = cacheKeyService;
             _eventPublisher = eventPublisher;
             _genericAttributeService = genericAttributeService;
             _customerAddressRepository = customerAddressRepository;
@@ -77,6 +79,7 @@ namespace Nop.Services.Customers
             _gaRepository = gaRepository;
             _shoppingCartRepository = shoppingCartRepository;
             _staticCacheManager = staticCacheManager;
+            _storeContext = storeContext;
             _shoppingCartSettings = shoppingCartSettings;
         }
 
@@ -242,6 +245,7 @@ namespace Nop.Services.Customers
             query = query.OrderByDescending(c => c.CreatedOnUtc);
 
             var customers = new PagedList<Customer>(query, pageIndex, pageSize, getOnlyTotalCount);
+
             return customers;
         }
 
@@ -375,7 +379,7 @@ namespace Nop.Services.Customers
             if (customerId == 0)
                 return null;
 
-            return _customerRepository.ToCachedGetById(customerId);
+            return _customerRepository.ToCachedGetById(customerId, _cachingSettings.ShortTermCacheTime);
         }
 
         /// <summary>
@@ -419,6 +423,7 @@ namespace Nop.Services.Customers
                         orderby c.Id
                         select c;
             var customer = query.FirstOrDefault();
+
             return customer;
         }
 
@@ -459,6 +464,80 @@ namespace Nop.Services.Customers
         }
 
         /// <summary>
+        /// Gets built-in system record used for background tasks
+        /// </summary>
+        /// <returns>A customer object</returns>
+        public virtual Customer GetOrCreateBackgroundTaskUser()
+        {
+            var backgroundTaskUser = GetCustomerBySystemName(NopCustomerDefaults.BackgroundTaskCustomerName);
+
+            if(backgroundTaskUser is null)
+            {
+                //If for any reason the system user isn't in the database, then we add it
+                backgroundTaskUser = new Customer
+                {
+                    Email = "builtin@background-task-record.com",
+                    CustomerGuid = Guid.NewGuid(),
+                    AdminComment = "Built-in system record used for background tasks.",
+                    Active = true,
+                    IsSystemAccount = true,
+                    SystemName = NopCustomerDefaults.BackgroundTaskCustomerName,
+                    CreatedOnUtc = DateTime.UtcNow,
+                    LastActivityDateUtc = DateTime.UtcNow,
+                    RegisteredInStoreId = _storeContext.CurrentStore.Id
+                };
+                
+                InsertCustomer(backgroundTaskUser);
+
+                var guestRole = GetCustomerRoleBySystemName(NopCustomerDefaults.GuestsRoleName);
+
+                if(guestRole is null)
+                    throw new NopException("'Guests' role could not be loaded");
+
+                AddCustomerRoleMapping(new CustomerCustomerRoleMapping { CustomerRoleId = guestRole.Id, CustomerId = backgroundTaskUser.Id });
+            }
+
+            return backgroundTaskUser;
+        }
+
+        /// <summary>
+        /// Gets built-in system guest record used for requests from search engines
+        /// </summary>
+        /// <returns>A customer object</returns>
+        public virtual Customer GetOrCreateSearchEngineUser()
+        {
+            var searchEngineUser = GetCustomerBySystemName(NopCustomerDefaults.SearchEngineCustomerName);
+
+            if(searchEngineUser is null)
+            {
+                //If for any reason the system user isn't in the database, then we add it
+                searchEngineUser = new Customer
+                {
+                    Email = "builtin@search_engine_record.com",
+                    CustomerGuid = Guid.NewGuid(),
+                    AdminComment = "Built-in system guest record used for requests from search engines.",
+                    Active = true,
+                    IsSystemAccount = true,
+                    SystemName = NopCustomerDefaults.SearchEngineCustomerName,
+                    CreatedOnUtc = DateTime.UtcNow,
+                    LastActivityDateUtc = DateTime.UtcNow,
+                    RegisteredInStoreId = _storeContext.CurrentStore.Id
+                };
+                
+                InsertCustomer(searchEngineUser);
+
+                var guestRole = GetCustomerRoleBySystemName(NopCustomerDefaults.GuestsRoleName);
+
+                if(guestRole is null)
+                    throw new NopException("'Guests' role could not be loaded");
+
+                AddCustomerRoleMapping(new CustomerCustomerRoleMapping { CustomerRoleId = guestRole.Id, CustomerId = searchEngineUser.Id });
+            }
+
+            return searchEngineUser;
+        }
+
+        /// <summary>
         /// Get customer by username
         /// </summary>
         /// <param name="username">Username</param>
@@ -496,6 +575,9 @@ namespace Nop.Services.Customers
                 throw new NopException("'Guests' role could not be loaded");
 
             _customerRepository.Insert(customer);
+
+            //event notification
+            _eventPublisher.EntityInserted(customer);
 
             AddCustomerRoleMapping(new CustomerCustomerRoleMapping { CustomerId = customer.Id, CustomerRoleId = guestRole.Id });
 
@@ -602,8 +684,7 @@ namespace Nop.Services.Customers
             var pTotalRecordsDeleted = SqlParameterHelper.GetOutputInt32Parameter("TotalRecordsDeleted");
 
             //invoke stored procedure
-            _dataProvider.Query<object>("EXEC [DeleteGuests] @OnlyWithoutShoppingCart, @CreatedFromUtc, @CreatedToUtc, @TotalRecordsDeleted OUTPUT",
-                pOnlyWithoutShoppingCart,
+            _customerRepository.EntityFromSql("DeleteGuests", pOnlyWithoutShoppingCart,
                 pCreatedFromUtc,
                 pCreatedToUtc,
                 pTotalRecordsDeleted);
@@ -990,6 +1071,7 @@ namespace Nop.Services.Customers
             {
                 _customerCustomerRoleMappingRepository.Delete(mapping);
 
+                //event notification
                 _eventPublisher.EntityDeleted(mapping);
             }
         }
@@ -1035,7 +1117,7 @@ namespace Nop.Services.Customers
             if (string.IsNullOrWhiteSpace(systemName))
                 return null;
 
-            var key = NopCustomerServiceCachingDefaults.CustomerRolesBySystemNameCacheKey.ToCacheKey(systemName);
+            var key = _cacheKeyService.PrepareKeyForDefaultCache(NopCustomerServicesDefaults.CustomerRolesBySystemNameCacheKey, systemName);
 
             var query = from cr in _customerRoleRepository.Table
                 orderby cr.Id
@@ -1063,9 +1145,9 @@ namespace Nop.Services.Customers
                         (showHidden || cr.Active)
                         select cr.Id;
 
-            var key = NopCustomerServiceCachingDefaults.CustomerRoleIdsCacheKey.ToCacheKey(customer.Id, showHidden);
+            var key = _cacheKeyService.PrepareKeyForShortTermCache(NopCustomerServicesDefaults.CustomerRoleIdsCacheKey, customer, showHidden);
 
-            return string.IsNullOrEmpty(key) ? query.ToArray() : _cacheManager.Get(key, () => query.ToArray());
+            return _staticCacheManager.Get(key, () => query.ToArray());
         }
 
         /// <summary>
@@ -1085,9 +1167,9 @@ namespace Nop.Services.Customers
                         (showHidden || cr.Active)
                         select cr;
 
-            var key = NopCustomerServiceCachingDefaults.CustomerRolesCacheKey.ToCacheKey(customer, showHidden);
+            var key = _cacheKeyService.PrepareKeyForShortTermCache(NopCustomerServicesDefaults.CustomerRolesCacheKey, customer, showHidden);
 
-            return string.IsNullOrEmpty(key) ? query.ToList() : _cacheManager.Get(key, () => query.ToList());
+            return _staticCacheManager.Get(key, () => query.ToList());
         }
 
         /// <summary>
@@ -1097,7 +1179,7 @@ namespace Nop.Services.Customers
         /// <returns>Customer roles</returns>
         public virtual IList<CustomerRole> GetAllCustomerRoles(bool showHidden = false)
         {
-            var key = NopCustomerServiceCachingDefaults.CustomerRolesAllCacheKey.ToCacheKey(showHidden);
+            var key = _cacheKeyService.PrepareKeyForDefaultCache(NopCustomerServicesDefaults.CustomerRolesAllCacheKey, showHidden);
 
             var query = from cr in _customerRoleRepository.Table
                 orderby cr.Name
@@ -1357,9 +1439,8 @@ namespace Nop.Services.Customers
             if (_customerSettings.PasswordLifetime == 0)
                 return false;
 
-            //cache result between HTTP requests
-            var cacheKey = NopCustomerServiceCachingDefaults.CustomerPasswordLifetimeCacheKey.ToCacheKey(customer);
-
+            var cacheKey = _cacheKeyService.PrepareKeyForShortTermCache(NopCustomerServicesDefaults.CustomerPasswordLifetimeCacheKey, customer);
+            
             //get current password usage time
             var currentLifetime = _staticCacheManager.Get(cacheKey, () =>
             {
@@ -1397,6 +1478,7 @@ namespace Nop.Services.Customers
 
                 _customerAddressMappingRepository.Delete(mapping);
 
+                //event notification
                 _eventPublisher.EntityDeleted(mapping);
             }
         }
@@ -1424,6 +1506,7 @@ namespace Nop.Services.Customers
 
                 _customerAddressMappingRepository.Insert(mapping);
 
+                //event notification
                 _eventPublisher.EntityInserted(mapping);
             }
         }
@@ -1440,9 +1523,9 @@ namespace Nop.Services.Customers
                 where cam.CustomerId == customerId
                 select address;
 
-            var key = NopCustomerServiceCachingDefaults.CustomerAddressesByCustomerIdCacheKey.ToCacheKey(customerId);
+            var key = _cacheKeyService.PrepareKeyForShortTermCache(NopCustomerServicesDefaults.CustomerAddressesByCustomerIdCacheKey, customerId);
 
-            return string.IsNullOrEmpty(key) ? query.ToList() : _cacheManager.Get(key, () => query.ToList());
+            return _staticCacheManager.Get(key, () => query.ToList());
         }
 
         /// <summary>
@@ -1461,9 +1544,9 @@ namespace Nop.Services.Customers
                 where cam.CustomerId == customerId && address.Id == addressId
                 select address;
 
-            var key = NopCustomerServiceCachingDefaults.CustomerAddressCacheKeyCacheKey.ToCacheKey(customerId, addressId);
+            var key = _cacheKeyService.PrepareKeyForShortTermCache(NopCustomerServicesDefaults.CustomerAddressCacheKeyCacheKey, customerId, addressId);
 
-            return string.IsNullOrEmpty(key) ? query.Single() : _cacheManager.Get(key, () => query.Single());
+            return _staticCacheManager.Get(key, () => query.Single());
         }
 
         /// <summary>
