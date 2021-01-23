@@ -1,5 +1,6 @@
 ﻿using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Routing;
+using Nop.Services.Installation;
 using Nop.Web.Framework.Mvc.Routing;
 
 namespace Nop.Web.Infrastructure
@@ -30,6 +31,10 @@ namespace Nop.Web.Infrastructure
             //login
             endpointRouteBuilder.MapControllerRoute("Login", $"{pattern}login/",
                 new { controller = "Customer", action = "Login" });
+
+            // multi-factor verification digit code page
+            endpointRouteBuilder.MapControllerRoute("MultiFactorVerification", $"{pattern}multi-factor-verification/",
+                new { controller = "Customer", action = "MultiFactorVerification" });
 
             //register
             endpointRouteBuilder.MapControllerRoute("Register", $"{pattern}register/",
@@ -64,10 +69,6 @@ namespace Nop.Web.Infrastructure
             //contact us
             endpointRouteBuilder.MapControllerRoute("ContactUs", $"{pattern}contactus",
                 new { controller = "Common", action = "ContactUs" });
-
-            //sitemap
-            endpointRouteBuilder.MapControllerRoute("Sitemap", $"{pattern}sitemap",
-                new { controller = "Common", action = "Sitemap" });
 
             //product search
             endpointRouteBuilder.MapControllerRoute("ProductSearch", $"{pattern}search/",
@@ -202,8 +203,7 @@ namespace Nop.Web.Infrastructure
             endpointRouteBuilder.MapControllerRoute("CheckoutConfirm", $"{pattern}checkout/confirm",
                 new { controller = "Checkout", action = "Confirm" });
 
-            endpointRouteBuilder.MapControllerRoute("CheckoutCompleted",
-                pattern + "checkout/completed/{orderId:int}",
+            endpointRouteBuilder.MapControllerRoute("CheckoutCompleted", pattern + "checkout/completed/{orderId:int?}",
                 new { controller = "Checkout", action = "Completed" });
 
             //subscribe newsletters
@@ -304,6 +304,9 @@ namespace Nop.Web.Infrastructure
             endpointRouteBuilder.MapControllerRoute("CustomerAddressAdd", $"{pattern}customer/addressadd",
                 new { controller = "Customer", action = "AddressAdd" });
 
+            endpointRouteBuilder.MapControllerRoute("CustomerMultiFactorAuthenticationProviderConfig", $"{pattern}customer/providerconfig",
+                new { controller = "Customer", action = "ConfigureMultiFactorAuthenticationProvider" });
+
             //customer profile page
             endpointRouteBuilder.MapControllerRoute("CustomerProfile",
                 pattern + "profile/{id:min(0)}",
@@ -375,6 +378,10 @@ namespace Nop.Web.Infrastructure
             //customer check gift card balance 
             endpointRouteBuilder.MapControllerRoute("CheckGiftCardBalance", $"{pattern}customer/checkgiftcardbalance",
                 new { controller = "Customer", action = "CheckGiftCardBalance" });
+
+            //customer multi-factor authentication settings 
+            endpointRouteBuilder.MapControllerRoute("MultiFactorAuthenticationSettings", $"{pattern}customer/multifactorauthentication",
+                new { controller = "Customer", action = "MultiFactorAuthentication" });
 
             //poll vote AJAX link
             endpointRouteBuilder.MapControllerRoute("PollVote", "poll/vote",
@@ -543,12 +550,14 @@ namespace Nop.Web.Infrastructure
             endpointRouteBuilder.MapControllerRoute("robots.txt", $"{pattern}robots.txt",
                 new { controller = "Common", action = "RobotsTextFile" });
 
-            //sitemap (XML)
-            endpointRouteBuilder.MapControllerRoute("sitemap.xml", $"{pattern}sitemap.xml",
+            //sitemap
+            endpointRouteBuilder.MapControllerRoute("Sitemap", $"{pattern}sitemap",
+                new { controller = "Common", action = "Sitemap" });
+
+            endpointRouteBuilder.MapControllerRoute("sitemap.xml", "sitemap.xml",
                 new { controller = "Common", action = "SitemapXml" });
 
-            endpointRouteBuilder.MapControllerRoute("sitemap-indexed.xml",
-                pattern + "sitemap-{Id:min(0)}.xml",
+            endpointRouteBuilder.MapControllerRoute("sitemap-indexed.xml", "sitemap-{Id:min(0)}.xml",
                 new { controller = "Common", action = "SitemapXml" });
 
             //store closed
@@ -556,7 +565,7 @@ namespace Nop.Web.Infrastructure
                 new { controller = "Common", action = "StoreClosed" });
 
             //install
-            endpointRouteBuilder.MapControllerRoute("Installation", $"{pattern}install",
+            endpointRouteBuilder.MapControllerRoute("Installation", $"{pattern}{NopInstallationDefaults.InstallPath}",
                 new { controller = "Install", action = "Index" });
 
             //error page

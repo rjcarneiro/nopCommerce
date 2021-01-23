@@ -111,7 +111,6 @@
         public static string HeaderMiddle => "admin_header_middle";
         public static string HeaderNavbarAfter => "admin_header_navbar_after";
         public static string HeaderNavbarBefore => "admin_header_navbar_before";
-        public static string HeaderToggleAfter => "admin_header_toggle_after";
         public static string LanguageDetailsBlock => "admin_language_details_block";
         public static string LanguageDetailsButtons => "admin_language_details_buttons";
         public static string LanguageListButtons => "admin_language_list_buttons";
@@ -134,6 +133,7 @@
         public static string MessageTemplateDetailsTop => "admin_message_template_details_top";
         public static string MessageTemplateListButtons => "admin_message_template_list_buttons";
         public static string MessageTemplateTestButtons => "admin_message_template_test_buttons";
+        public static string MultiFactorAuthenticationListButtons => "admin_multifactor_authentication_list_buttons";
         public static string NewsCommentListButtons => "admin_news_comment_list_buttons";
         public static string NewsDetailsBlock => "admin_news_details_block";
         public static string NewsDetailsButtons => "admin_news_details_buttons";
